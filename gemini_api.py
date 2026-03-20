@@ -17,7 +17,6 @@ import aiohttp
 from config import save_config
 from utils import handle_soul_updates, extract_thoughts, extract_reminder_commands
 from tts import generate_tts
-from reminders import get_all_reminders_text
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
@@ -86,6 +85,7 @@ def build_system_prompt(config: dict, *, include_word_game: bool = True) -> str:
 
     # Inject reminders & auto-wake-times
     if config.get("reminders_enabled", False):
+        from reminders import get_all_reminders_text  # lazy to avoid circular import
         reminder_instructions = (
             "[REMINDERS & AUTO-WAKE — Your scheduled event system.\n"
             "To schedule a new reminder, output: <!add-reminder : [dd-mm-yy HH:MM] [prompt]>\n"
