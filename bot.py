@@ -18,6 +18,7 @@ from gemini_api import generate, build_system_prompt
 from utils import strip_mention, chunk_message, format_context, resolve_custom_emoji, extract_thoughts, extract_soul_updates
 from revival import RevivalManager
 from auto_chat import AutoChatManager
+from reminders import ReminderManager
 
 # ---------------------------------------------------------------------------
 # Environment
@@ -45,6 +46,7 @@ bot_config: dict = {}
 # Managers (initialised in on_ready)
 revival_manager: RevivalManager | None = None
 auto_chat_manager: AutoChatManager | None = None
+reminder_manager: ReminderManager | None = None
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -107,7 +109,7 @@ async def _handle_soc_extraction(response_text: str, bot_ref, config: dict) -> s
 
 @bot.event
 async def on_ready():
-    global bot_config, revival_manager, auto_chat_manager
+    global bot_config, revival_manager, auto_chat_manager, reminder_manager
     bot_config = load_config()
 
     revival_manager = RevivalManager(bot, bot_config)
@@ -115,6 +117,9 @@ async def on_ready():
 
     auto_chat_manager = AutoChatManager(bot, bot_config)
     auto_chat_manager.start()
+
+    reminder_manager = ReminderManager(bot, bot_config)
+    reminder_manager.start()
 
     try:
         synced = await bot.tree.sync()
@@ -186,11 +191,15 @@ async def on_message(message: discord.Message):
         # SoC context injection (after chat history)
         context += await _read_soc_context(bot, bot_config)
 
-        response_text, audio_bytes, soul_logs = await generate(
+        response_text, audio_bytes, soul_logs, reminder_cmds = await generate(
             user_text, context, bot_config,
             speaker_name=message.author.display_name,
             speaker_id=str(message.author.id),
         )
+
+        # Apply any reminder/wake-time commands the bot emitted
+        if reminder_cmds and reminder_manager:
+            reminder_manager._apply_commands(reminder_cmds)
 
         # SoC thought extraction
         response_text = await _handle_soc_extraction(response_text, bot, bot_config)
@@ -569,7 +578,7 @@ async def set_secret_word(interaction: discord.Interaction, prompt: str):
     selector = bot_config.get("word_game_selector_prompt", "")
     hidden_sys = (main_prompt + "\n\n" + selector).strip() if selector else main_prompt
 
-    hidden_response, _, _ = await generate(
+    hidden_response, _, _, _ = await generate(
         prompt=prompt,
         context="",
         config=bot_config,
@@ -806,6 +815,81 @@ async def set_soul_channel(interaction: discord.Interaction, channel: discord.Te
 
 
 # ---------------------------------------------------------------------------
+# Slash commands — Reminders & auto-wake
+# ---------------------------------------------------------------------------
+
+@bot.tree.command(name="setup-reminders", description="Enable/disable reminders and set the output channel")
+@app_commands.describe(
+    enabled="True = reminders active, False = disabled",
+    channel="The channel where fired reminders are posted",
+)
+@app_commands.default_permissions(administrator=True)
+async def setup_reminders(interaction: discord.Interaction, enabled: bool, channel: discord.TextChannel):
+    bot_config["reminders_enabled"] = enabled
+    bot_config["reminders_channel_id"] = str(channel.id)
+    save_config(bot_config)
+
+    if reminder_manager:
+        if enabled:
+            reminder_manager.start()
+        else:
+            reminder_manager.stop()
+
+    state = "enabled" if enabled else "disabled"
+    await interaction.response.send_message(
+        f"✅ Reminders **{state}** — output channel: {channel.mention}.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="add-reminder", description="Add a named reminder")
+@app_commands.describe(
+    name="Unique name for this reminder (used to delete it later)",
+    datetime="Date and time in dd-mm-yy HH:MM format (24-hour clock)",
+    prompt="The reminder text / prompt that will be sent to the bot when it fires",
+)
+@app_commands.default_permissions(administrator=True)
+async def add_reminder_cmd(interaction: discord.Interaction, name: str, datetime: str, prompt: str):
+    if not reminder_manager:
+        await interaction.response.send_message("⚠️ Reminder system not initialised.", ephemeral=True)
+        return
+    err = reminder_manager.add_reminder(name, datetime, prompt)
+    if err:
+        await interaction.response.send_message(f"⚠️ {err}", ephemeral=True)
+    else:
+        await interaction.response.send_message(
+            f"✅ Reminder **{name}** set for `{datetime}`.\n📝 Prompt: {prompt}",
+            ephemeral=True,
+        )
+
+
+@bot.tree.command(name="delete-reminder", description="Delete a reminder by name")
+@app_commands.describe(name="The name of the reminder to delete")
+@app_commands.default_permissions(administrator=True)
+async def delete_reminder_cmd(interaction: discord.Interaction, name: str):
+    if not reminder_manager:
+        await interaction.response.send_message("⚠️ Reminder system not initialised.", ephemeral=True)
+        return
+    err = reminder_manager.delete_reminder(name)
+    if err:
+        await interaction.response.send_message(f"⚠️ {err}", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"✅ Reminder **{name}** deleted.", ephemeral=True)
+
+
+@bot.tree.command(name="show-reminders", description="Show all currently scheduled reminders and wake-times")
+@app_commands.default_permissions(administrator=True)
+async def show_reminders_cmd(interaction: discord.Interaction):
+    from reminders import get_all_reminders_text
+    text = get_all_reminders_text()
+    full = f"📋 **Scheduled Entries:**\n```\n{text}\n```"
+    chunks = chunk_message(full)
+    await interaction.response.send_message(chunks[0], ephemeral=True)
+    for chunk in chunks[1:]:
+        await interaction.followup.send(chunk, ephemeral=True)
+
+
+# ---------------------------------------------------------------------------
 # Slash commands — Custom model settings
 # ---------------------------------------------------------------------------
 
@@ -1003,6 +1087,22 @@ async def help_command(interaction: discord.Interaction):
             "`/set-chat-revival` — Configure periodic chat revival + enable/disable\n"
             "`/set-cr-params` — Set active window duration & check interval\n"
             "`/set-cr-leave-msg` — Set the goodbye message after revival expires"
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="⏰ Reminders & Auto-Wake",
+        value=(
+            "`/setup-reminders` — Enable/disable + set the output channel\n"
+            "`/add-reminder` — Add a named reminder (dd-mm-yy HH:MM)\n"
+            "`/delete-reminder` — Delete a reminder by name\n"
+            "`/show-reminders` — Show all scheduled reminders and wake-times\n\n"
+            "The bot can also self-manage reminders using:\n"
+            "`<!add-reminder : [datetime] [prompt]>`\n"
+            "`<!delete-reminder : [datetime] [prompt]>`\n"
+            "`<!add-auto-wake-time : [datetime] [self-prompt]>`\n"
+            "`<!delete-auto-wake-time : [datetime] [self-prompt]>`"
         ),
         inline=False,
     )

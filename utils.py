@@ -289,3 +289,47 @@ def handle_soul_updates(response_text: str, config: dict) -> tuple[str, list[str
             print(f"[Soul] Failed to write soul.md: {e}")
 
     return clean_text, logs
+
+
+def extract_reminder_commands(text: str) -> tuple[str, list[tuple[str, str, str]]]:
+    """
+    Extract reminder / wake-time command tags from generated text.
+
+    Recognised tags (case-insensitive, tolerant of markdown escaping):
+        <!add-reminder : [datetime] [prompt]>
+        <!delete-reminder : [datetime] [prompt]>
+        <!add-auto-wake-time : [datetime] [self-prompt]>
+        <!delete-auto-wake-time : [datetime] [self-prompt]>
+
+    The datetime portion uses the format  dd-mm-yy HH:MM .
+
+    Returns (clean_text, commands) where each command is a tuple of
+    (action, datetime_str, prompt_str).
+    """
+    commands: list[tuple[str, str, str]] = []
+
+    # Build regex:
+    #   \<?!?(add-reminder|delete-reminder|add-auto-wake-time|delete-auto-wake-time)
+    #   \s*:\s*\[?\s*(datetime)\s*\]?\s+\[?\s*(prompt)\s*\]?\s*>?
+    #
+    # We are generous with optional escaping (\< \! etc.) and optional brackets
+    # around the datetime and prompt portions, since LLMs may format them in
+    # slightly different ways.
+    pattern = re.compile(
+        r"\\?<\s*\\?!\s*"
+        r"(add-reminder|delete-reminder|add-auto-wake-time|delete-auto-wake-time)"
+        r"\s*:\s*"
+        r"\\?\[?\s*(\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2})\s*\\?\]?\s+"
+        r"\\?\[?\s*(.*?)\s*\\?\]?\s*"
+        r"\\?>",
+        re.IGNORECASE,
+    )
+
+    for match in pattern.finditer(text):
+        action = match.group(1).lower()
+        dt_str = match.group(2).strip()
+        prompt_str = match.group(3).strip()
+        commands.append((action, dt_str, prompt_str))
+
+    clean_text = pattern.sub("", text).strip()
+    return clean_text, commands

@@ -15,8 +15,9 @@ import os
 import aiohttp
 
 from config import save_config
-from utils import handle_soul_updates, extract_thoughts
+from utils import handle_soul_updates, extract_thoughts, extract_reminder_commands
 from tts import generate_tts
+from reminders import get_all_reminders_text
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
@@ -83,6 +84,19 @@ def build_system_prompt(config: dict, *, include_word_game: bool = True) -> str:
         config["soul_error_turn"] = ""
         save_config(config)
 
+    # Inject reminders & auto-wake-times
+    if config.get("reminders_enabled", False):
+        reminder_instructions = (
+            "[REMINDERS & AUTO-WAKE — Your scheduled event system.\n"
+            "To schedule a new reminder, output: <!add-reminder : [dd-mm-yy HH:MM] [prompt]>\n"
+            "To cancel an existing reminder, output: <!delete-reminder : [dd-mm-yy HH:MM] [prompt]>\n"
+            "To schedule a self-wake, output: <!add-auto-wake-time : [dd-mm-yy HH:MM] [self-prompt]>\n"
+            "To cancel a self-wake, output: <!delete-auto-wake-time : [dd-mm-yy HH:MM] [self-prompt]>\n"
+            "These tags are hidden from users. When a reminder fires, its prompt is sent to you as input.]"
+        )
+        all_reminders = get_all_reminders_text()
+        parts.append(f"{reminder_instructions}\n\nCURRENT SCHEDULED ENTRIES:\n{all_reminders}")
+
     return "\n\n".join(p for p in parts if p)
 
 
@@ -134,16 +148,16 @@ async def generate(
     speaker_name: str = "",
     speaker_id: str = "",
     system_prompt_override: str | None = None,
-) -> tuple[str, bytes | None, list[str]]:
+) -> tuple[str, bytes | None, list[str], list[tuple[str, str, str]]]:
     """
-    Call the Gemini API and return (text_reply, wav_bytes_or_None, logs).
+    Call the Gemini API and return (text_reply, wav_bytes_or_None, soul_logs, reminder_cmds).
 
     system_prompt_override: if provided, used instead of the auto-assembled
     system prompt.  Used by the word-game hidden turn.
     """
     api_key = config.get("api_key")
     if not api_key:
-        return MSG_NO_KEY, None, []
+        return MSG_NO_KEY, None, [], []
 
     model_mode    = config.get("model_mode", "gemini")
     # Treat legacy "default" the same as "gemini"
@@ -163,7 +177,7 @@ async def generate(
     if custom_mode:
         text_endpoint = config.get("model_endpoint_custom", "")
         if not text_endpoint:
-            return "⚠️ No custom model endpoint configured. Run `/set-api-endpoint-custom` first.", None, []
+            return "⚠️ No custom model endpoint configured. Run `/set-api-endpoint-custom` first.", None, [], []
     elif gemma_mode:
         text_endpoint = config.get("model_endpoint_gemma", "")
         if not text_endpoint:
@@ -222,40 +236,43 @@ async def generate(
                 data   = await resp.json()
 
         if status == 429:
-            return MSG_RATE_LIMIT, None, []
+            return MSG_RATE_LIMIT, None, [], []
 
         if status != 200:
             err = str(data)
             if "SAFETY" in err.upper() or "blocked" in err.lower():
-                return MSG_SAFETY_BLOCK, None, []
+                return MSG_SAFETY_BLOCK, None, [], []
             print(f"[ChatBuddy] Text API error {status}: {data}")
-            return MSG_GENERIC_ERROR, None, []
+            return MSG_GENERIC_ERROR, None, [], []
 
         if data.get("promptFeedback", {}).get("blockReason"):
-            return MSG_SAFETY_BLOCK, None, []
+            return MSG_SAFETY_BLOCK, None, [], []
 
         text_reply = _extract_text(data)
         if text_reply is None:
-            return MSG_SAFETY_BLOCK, None, []
+            return MSG_SAFETY_BLOCK, None, [], []
 
         # Process soul immediately before TTS or returning
         text_reply, soul_logs = handle_soul_updates(text_reply, config)
 
+        # Extract reminder / wake-time commands from the response
+        text_reply, reminder_cmds = extract_reminder_commands(text_reply)
+
     except aiohttp.ClientError as e:
         print(f"[ChatBuddy] HTTP error during text inference: {e}")
-        return MSG_GENERIC_ERROR, None, []
+        return MSG_GENERIC_ERROR, None, [], []
     except Exception as e:
         print(f"[ChatBuddy] Unexpected error during text inference: {e}")
-        return MSG_GENERIC_ERROR, None, []
+        return MSG_GENERIC_ERROR, None, [], []
 
     # ── Step 2: TTS via WebSocket Live API (only when audio is enabled) ────
     if not audio_enabled:
-        return text_reply, None, soul_logs
+        return text_reply, None, soul_logs, reminder_cmds
 
     tts_endpoint = config.get("audio_endpoint", "").strip()
     if not tts_endpoint:
         print("[ChatBuddy] audio_enabled=True but audio_endpoint is empty — skipping TTS.")
-        return text_reply, None, soul_logs
+        return text_reply, None, soul_logs, reminder_cmds
 
     voice = config.get("audio_settings", {}).get("voice", "Aoede")
 
@@ -263,11 +280,11 @@ async def generate(
     tts_text, _ = extract_thoughts(text_reply)
     if not tts_text.strip():
         # If the response was ONLY thoughts, no need to synthesize empty audio
-        return text_reply, None, soul_logs
+        return text_reply, None, soul_logs, reminder_cmds
 
     wav_bytes = await generate_tts(api_key, tts_endpoint, voice, tts_text)
 
     if wav_bytes is None:
-        return text_reply, None, soul_logs
+        return text_reply, None, soul_logs, reminder_cmds
 
-    return text_reply, wav_bytes, soul_logs
+    return text_reply, wav_bytes, soul_logs, reminder_cmds

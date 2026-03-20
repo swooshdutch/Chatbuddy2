@@ -12,7 +12,7 @@ from discord.ext import tasks
 
 from config import save_config
 from gemini_api import generate
-from utils import format_context, chunk_message, resolve_custom_emoji, extract_thoughts
+from utils import format_context, chunk_message, resolve_custom_emoji, extract_thoughts, extract_reminder_commands
 
 
 class RevivalManager:
@@ -130,12 +130,18 @@ class RevivalManager:
                     )
 
         # Generate the revival message
-        response_text, audio_bytes, soul_logs = await generate(
+        response_text, audio_bytes, soul_logs, reminder_cmds = await generate(
             prompt="Start a new conversation to revive the chat.",
             context=context,
             config=self.config,
             revival_system_instruct=system_instruct,
         )
+
+        # Apply reminder commands the bot may have emitted
+        if reminder_cmds:
+            from reminders import ReminderManager
+            rm = ReminderManager(self.bot, self.config)
+            rm._apply_commands(reminder_cmds)
 
         if audio_bytes:
             audio_file = discord.File(fp=io.BytesIO(audio_bytes), filename="revival.wav")
@@ -268,12 +274,18 @@ class RevivalManager:
                 if not user_text:
                     user_text = "(empty message)"
 
-                response_text, audio_bytes, soul_logs = await generate(
+                response_text, audio_bytes, soul_logs, reminder_cmds = await generate(
                     prompt=user_text,
                     context=context,
                     config=self.config,
                     revival_system_instruct=system_instruct,
                 )
+
+                # Apply reminder commands the bot may have emitted
+                if reminder_cmds:
+                    from reminders import ReminderManager
+                    rm = ReminderManager(self.bot, self.config)
+                    rm._apply_commands(reminder_cmds)
 
                 if audio_bytes:
                     audio_file = discord.File(fp=io.BytesIO(audio_bytes), filename="revival_reply.wav")
