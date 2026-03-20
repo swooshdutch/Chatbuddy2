@@ -295,33 +295,44 @@ def extract_reminder_commands(text: str) -> tuple[str, list[tuple[str, str, str]
     """
     Extract reminder / wake-time command tags from generated text.
 
-    Recognised tags (case-insensitive, tolerant of markdown escaping):
+    Recognised tag patterns (very tolerant of bot formatting):
         <!add-reminder : [datetime] [prompt]>
-        <!delete-reminder : [datetime] [prompt]>
-        <!add-auto-wake-time : [datetime] [self-prompt]>
-        <!delete-auto-wake-time : [datetime] [self-prompt]>
+        <add-reminder : datetime prompt>
+        <!delete-reminder : datetime prompt>
+        <!add-auto-wake-time : datetime prompt>
+        <!delete-auto-wake-time : datetime prompt>
+        ... and markdown-escaped variants (\\< \\! \\> etc.)
 
-    The datetime portion uses the format  dd-mm-yy HH:MM .
+    The datetime portion is accepted in many formats:
+        dd-mm-yy HH:MM         (canonical)
+        YYYY-MM-DD HH:MM       (ISO-ish)
+        YYYY-MM-DD HH:MM:SS    (ISO with seconds)
+        dd/mm/yy HH:MM         (slash variant)
+        and more.
 
     Returns (clean_text, commands) where each command is a tuple of
     (action, datetime_str, prompt_str).
     """
     commands: list[tuple[str, str, str]] = []
 
-    # Build regex:
-    #   \<?!?(add-reminder|delete-reminder|add-auto-wake-time|delete-auto-wake-time)
-    #   \s*:\s*\[?\s*(datetime)\s*\]?\s+\[?\s*(prompt)\s*\]?\s*>?
-    #
-    # We are generous with optional escaping (\< \! etc.) and optional brackets
-    # around the datetime and prompt portions, since LLMs may format them in
-    # slightly different ways.
+    # Very tolerant regex:
+    #   - <, !, brackets are optional and may be backslash-escaped
+    #   - datetime is any reasonable date+time string (digits, separators, colons)
+    #   - prompt is everything between the datetime and closing >
+    #   - closing > is REQUIRED (the tag must end somewhere)
+    ACTIONS = r"(add-reminder|delete-reminder|add-auto-wake-time|delete-auto-wake-time)"
+    # Accept dates like: 20-03-26 22:30  |  2026-03-20 21:46:00  |  20/03/26 22:30
+    DT_PART = r"([\d]{2,4}[-/.][\d]{2}[-/.][\d]{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)"
+    # Prompt: everything else until close — greedy, anchored on the > at the end
+    PROMPT_PART = r"(.+?)"
+
     pattern = re.compile(
-        r"\\?<\s*\\?!\s*"
-        r"(add-reminder|delete-reminder|add-auto-wake-time|delete-auto-wake-time)"
-        r"\s*:\s*"
-        r"\\?\[?\s*(\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2})\s*\\?\]?\s+"
-        r"\\?\[?\s*(.*?)\s*\\?\]?\s*"
-        r"\\?>",
+        r"\\?<\s*\\?!?\s*"       # opening < (optional !, optional escaping)
+        + ACTIONS +
+        r"\s*:?\s*"               # optional colon
+        r"\\?\[?\s*" + DT_PART + r"\s*\\?\]?\s+"   # datetime (optional brackets)
+        r"\\?\[?\s*" + PROMPT_PART + r"\s*\\?\]?"   # prompt  (optional brackets)
+        r"\s*\\?>",               # REQUIRED closing >
         re.IGNORECASE,
     )
 
@@ -329,7 +340,19 @@ def extract_reminder_commands(text: str) -> tuple[str, list[tuple[str, str, str]
         action = match.group(1).lower()
         dt_str = match.group(2).strip()
         prompt_str = match.group(3).strip()
+        # Strip trailing > or \ that may have been caught in the prompt
+        prompt_str = prompt_str.rstrip(">").rstrip("\\").strip()
         commands.append((action, dt_str, prompt_str))
 
     clean_text = pattern.sub("", text).strip()
+
+    # Secondary cleanup: catch any remaining tag-like fragments the main regex
+    # might have missed (e.g. bot outputs with unusual whitespace / newlines)
+    leftover = re.compile(
+        r"\\?<\s*\\?!?\s*(?:add-reminder|delete-reminder|add-auto-wake-time|delete-auto-wake-time)"
+        r"[^>]*>?",
+        re.IGNORECASE,
+    )
+    clean_text = leftover.sub("", clean_text).strip()
+
     return clean_text, commands

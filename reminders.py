@@ -15,13 +15,13 @@ import asyncio
 import io
 import json
 import os
+import re
 from datetime import datetime, timezone, timedelta
 
 import discord
 from discord.ext import tasks
 
 from config import save_config
-from gemini_api import generate
 from utils import (
     format_context,
     chunk_message,
@@ -32,8 +32,41 @@ from utils import (
 
 REMINDERS_FILE = "reminders.json"
 
-# Date format used everywhere: dd-mm-yy HH:MM  (24-hour clock)
-DT_FORMAT = "%d-%m-%y %H:%M"
+# ── multi-format datetime parsing ─────────────────────────────────────────────
+
+# Accepted formats (tried in order):
+DT_FORMATS = [
+    "%d-%m-%y %H:%M",       # dd-mm-yy HH:MM   (canonical)
+    "%d-%m-%Y %H:%M",       # dd-mm-YYYY HH:MM
+    "%Y-%m-%d %H:%M",       # YYYY-MM-DD HH:MM  (ISO)
+    "%Y-%m-%d %H:%M:%S",    # YYYY-MM-DD HH:MM:SS (ISO with seconds)
+    "%d/%m/%y %H:%M",       # dd/mm/yy HH:MM
+    "%d/%m/%Y %H:%M",       # dd/mm/YYYY HH:MM
+    "%d.%m.%y %H:%M",       # dd.mm.yy HH:MM
+    "%d.%m.%Y %H:%M",       # dd.mm.YYYY HH:MM
+]
+
+# Canonical storage format — we normalise everything to this on save.
+DT_STORAGE = "%d-%m-%y %H:%M"
+
+
+def _parse_dt(dt_str: str) -> datetime | None:
+    """Parse a datetime string in any of the accepted formats, or None."""
+    cleaned = dt_str.strip()
+    for fmt in DT_FORMATS:
+        try:
+            return datetime.strptime(cleaned, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _normalise_dt(dt_str: str) -> str:
+    """Try to normalise *dt_str* to canonical dd-mm-yy HH:MM.  Passthrough on fail."""
+    parsed = _parse_dt(dt_str)
+    if parsed is None:
+        return dt_str.strip()
+    return parsed.strftime(DT_STORAGE)
 
 
 # ── persistence helpers ───────────────────────────────────────────────────────
@@ -45,7 +78,6 @@ def _load_reminders() -> dict:
     try:
         with open(REMINDERS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        # Ensure both top-level keys exist
         data.setdefault("reminders", {})
         data.setdefault("wake_times", {})
         return data
@@ -59,14 +91,6 @@ def _save_reminders(data: dict) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     os.replace(tmp, REMINDERS_FILE)
-
-
-def _parse_dt(dt_str: str) -> datetime | None:
-    """Parse a dd-mm-yy HH:MM string into a naive datetime, or None."""
-    try:
-        return datetime.strptime(dt_str.strip(), DT_FORMAT)
-    except ValueError:
-        return None
 
 
 # ── public data helpers (used by gemini_api for context injection) ─────────
@@ -135,17 +159,23 @@ class ReminderManager:
 
     # ── CRUD ───────────────────────────────────────────────────────────
 
-    def add_reminder(self, name: str, dt_str: str, prompt: str) -> str | None:
+    def add_reminder(self, name: str, dt_str: str, prompt: str, channel_id: str = "") -> str | None:
         """
         Add a reminder.  Returns None on success or an error string.
+        The datetime is normalised before storage.
         """
         parsed = _parse_dt(dt_str)
         if parsed is None:
-            return f"Invalid date/time format: `{dt_str}`. Expected `dd-mm-yy HH:MM`."
+            return f"Invalid date/time format: `{dt_str}`. Expected e.g. `dd-mm-yy HH:MM` or `YYYY-MM-DD HH:MM`."
+        normalised = parsed.strftime(DT_STORAGE)
+
         data = _load_reminders()
         if name in data["reminders"]:
             return f"A reminder named **{name}** already exists. Delete it first or choose another name."
-        data["reminders"][name] = {"datetime": dt_str.strip(), "prompt": prompt}
+        entry = {"datetime": normalised, "prompt": prompt}
+        if channel_id:
+            entry["channel_id"] = channel_id
+        data["reminders"][name] = entry
         _save_reminders(data)
         return None
 
@@ -158,15 +188,20 @@ class ReminderManager:
         _save_reminders(data)
         return None
 
-    def add_wake_time(self, name: str, dt_str: str, prompt: str) -> str | None:
+    def add_wake_time(self, name: str, dt_str: str, prompt: str, channel_id: str = "") -> str | None:
         """Add an auto-wake-time.  Returns None on success or an error string."""
         parsed = _parse_dt(dt_str)
         if parsed is None:
-            return f"Invalid date/time format: `{dt_str}`. Expected `dd-mm-yy HH:MM`."
+            return f"Invalid date/time format: `{dt_str}`. Expected e.g. `dd-mm-yy HH:MM` or `YYYY-MM-DD HH:MM`."
+        normalised = parsed.strftime(DT_STORAGE)
+
         data = _load_reminders()
         if name in data["wake_times"]:
             return f"A wake-time named **{name}** already exists. Delete it first or choose another name."
-        data["wake_times"][name] = {"datetime": dt_str.strip(), "prompt": prompt}
+        entry = {"datetime": normalised, "prompt": prompt}
+        if channel_id:
+            entry["channel_id"] = channel_id
+        data["wake_times"][name] = entry
         _save_reminders(data)
         return None
 
@@ -179,6 +214,20 @@ class ReminderManager:
         _save_reminders(data)
         return None
 
+    # ── logging helper ────────────────────────────────────────────────
+
+    async def _log(self, message: str):
+        """Send a log message to the configured reminder log channel, if any."""
+        log_ch_id = self.config.get("reminder_log_channel_id")
+        if not log_ch_id:
+            return
+        ch = self.bot.get_channel(int(log_ch_id))
+        if ch is not None:
+            try:
+                await ch.send(message)
+            except Exception:
+                pass  # don't crash the loop on log failures
+
     # ── core tick ──────────────────────────────────────────────────────
 
     async def _tick(self):
@@ -186,13 +235,8 @@ class ReminderManager:
         if not self.config.get("reminders_enabled"):
             return
 
-        channel_id = self.config.get("reminders_channel_id")
-        if not channel_id:
-            return
-
-        channel = self.bot.get_channel(int(channel_id))
-        if channel is None:
-            return
+        # We need at least a default output channel
+        default_ch_id = self.config.get("reminders_channel_id")
 
         now = datetime.now()  # naive local time — matches the dd-mm-yy HH:MM input
         data = _load_reminders()
@@ -206,9 +250,13 @@ class ReminderManager:
                 continue
             if now >= dt:
                 fired_reminders.append(name)
-                await self._fire_entry(
-                    channel, entry["prompt"], name, kind="reminder"
-                )
+                output_ch_id = entry.get("channel_id") or default_ch_id
+                if output_ch_id:
+                    channel = self.bot.get_channel(int(output_ch_id))
+                    if channel is not None:
+                        await self._fire_entry(
+                            channel, entry["prompt"], name, kind="reminder"
+                        )
                 fired_any = True
 
         for name in fired_reminders:
@@ -222,9 +270,13 @@ class ReminderManager:
                 continue
             if now >= dt:
                 fired_wakes.append(name)
-                await self._fire_entry(
-                    channel, entry["prompt"], name, kind="wake-time"
-                )
+                output_ch_id = entry.get("channel_id") or default_ch_id
+                if output_ch_id:
+                    channel = self.bot.get_channel(int(output_ch_id))
+                    if channel is not None:
+                        await self._fire_entry(
+                            channel, entry["prompt"], name, kind="wake-time"
+                        )
                 fired_any = True
 
         for name in fired_wakes:
@@ -247,6 +299,8 @@ class ReminderManager:
         *channel*.  Mirrors the normal response flow (SoC, soul, emoji, audio).
         """
         try:
+            from gemini_api import generate  # lazy to avoid circular import
+
             # Gather recent channel context so the bot has conversational awareness
             history_limit = self.config.get("chat_history_limit", 30)
             history_messages: list[discord.Message] = []
@@ -303,7 +357,8 @@ class ReminderManager:
 
             # Process reminder/wake-time tags the bot may have included
             response_text, new_cmds = extract_reminder_commands(response_text)
-            self._apply_commands(new_cmds)
+            if new_cmds:
+                await self._apply_commands(new_cmds, source_channel_id=str(channel.id))
 
             # SoC thought extraction
             soc_enabled = self.config.get("soc_enabled", False)
@@ -344,6 +399,9 @@ class ReminderManager:
                         for log_chunk in chunk_message(joined_logs, limit=1900):
                             await soul_ch.send(f"**🧠 Soul Updates:**\n{log_chunk}")
 
+            # Log the firing
+            await self._log(f"🔔 **Fired {kind}** `{entry_name}` in {channel.mention}")
+
             print(f"[Reminders] Fired {kind} '{entry_name}'.")
 
         except Exception as e:
@@ -351,57 +409,83 @@ class ReminderManager:
 
     # ── apply bot-generated reminder commands ─────────────────────────
 
-    def _apply_commands(self, commands: list[tuple[str, str, str]]):
+    async def _apply_commands(self, commands: list[tuple[str, str, str]], source_channel_id: str = ""):
         """
         Process commands extracted from bot output tags.
         Each command is (action, datetime_str, prompt_str).
         Actions: add-reminder, delete-reminder, add-auto-wake-time, delete-auto-wake-time
+
+        source_channel_id: the channel_id the bot was responding in, stored with new entries.
         """
+        default_ch = source_channel_id or self.config.get("reminders_channel_id", "")
+
         for action, dt_str, prompt_str in commands:
+            # Normalise datetime for storage
+            normalised = _normalise_dt(dt_str)
+
             # Auto-generate a name from the datetime + first words of prompt
-            auto_name = f"{dt_str}_{prompt_str[:20]}".replace(" ", "_").replace(":", "-")
+            auto_name = f"{normalised}_{prompt_str[:20]}".replace(" ", "_").replace(":", "-")
 
             if action == "add-reminder":
-                err = self.add_reminder(auto_name, dt_str, prompt_str)
+                err = self.add_reminder(auto_name, dt_str, prompt_str, channel_id=default_ch)
                 if err:
                     print(f"[Reminders] Bot add-reminder failed: {err}")
                 else:
                     print(f"[Reminders] Bot added reminder '{auto_name}'.")
+                    await self._log(
+                        f"📝 **Bot registered reminder** `{auto_name}`\n"
+                        f"⏱️ Fires: `{normalised}`\n"
+                        f"📋 Prompt: {prompt_str}"
+                    )
 
             elif action == "delete-reminder":
-                # Try to find and delete by matching datetime+prompt
-                self._delete_by_match("reminders", dt_str, prompt_str)
+                deleted_name = self._delete_by_match("reminders", dt_str, prompt_str)
+                if deleted_name:
+                    await self._log(f"🗑️ **Bot deleted reminder** `{deleted_name}`")
 
             elif action == "add-auto-wake-time":
-                err = self.add_wake_time(auto_name, dt_str, prompt_str)
+                err = self.add_wake_time(auto_name, dt_str, prompt_str, channel_id=default_ch)
                 if err:
                     print(f"[Reminders] Bot add-wake-time failed: {err}")
                 else:
                     print(f"[Reminders] Bot added wake-time '{auto_name}'.")
+                    await self._log(
+                        f"📝 **Bot registered wake-time** `{auto_name}`\n"
+                        f"⏱️ Fires: `{normalised}`\n"
+                        f"📋 Self-prompt: {prompt_str}"
+                    )
 
             elif action == "delete-auto-wake-time":
-                self._delete_by_match("wake_times", dt_str, prompt_str)
+                deleted_name = self._delete_by_match("wake_times", dt_str, prompt_str)
+                if deleted_name:
+                    await self._log(f"🗑️ **Bot deleted wake-time** `{deleted_name}`")
 
-    def _delete_by_match(self, bucket: str, dt_str: str, prompt_str: str):
+    def _delete_by_match(self, bucket: str, dt_str: str, prompt_str: str) -> str | None:
         """
         Delete an entry from *bucket* ('reminders' or 'wake_times') whose
         datetime and prompt match the given values.  Falls back to matching
         by datetime only if the prompt doesn't match exactly.
+        Returns the name of the deleted entry or None.
         """
         data = _load_reminders()
         entries = data.get(bucket, {})
         target_name = None
 
-        # Exact match first
+        # Normalise the incoming datetime for comparison
+        normalised = _normalise_dt(dt_str)
+
+        # Exact match first (normalised datetime + prompt)
         for name, entry in entries.items():
-            if entry["datetime"].strip() == dt_str.strip() and entry["prompt"].strip() == prompt_str.strip():
+            entry_norm = _normalise_dt(entry["datetime"])
+            if entry_norm == normalised and entry["prompt"].strip() == prompt_str.strip():
                 target_name = name
                 break
 
         # Fallback: match by datetime only
         if target_name is None:
             for name, entry in entries.items():
-                if entry["datetime"].strip() == dt_str.strip():
+                entry_norm = _normalise_dt(entry["datetime"])
+                if entry_norm == normalised:
                     target_name = name
                     break
 
@@ -409,5 +493,7 @@ class ReminderManager:
             del data[bucket][target_name]
             _save_reminders(data)
             print(f"[Reminders] Bot deleted {bucket} entry '{target_name}'.")
+            return target_name
         else:
             print(f"[Reminders] Bot delete-{bucket}: no matching entry for dt={dt_str}.")
+            return None

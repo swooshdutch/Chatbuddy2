@@ -176,7 +176,7 @@ class AutoChatManager:
                 if reminder_cmds:
                     from reminders import ReminderManager
                     rm = ReminderManager(self.bot, self.config)
-                    rm._apply_commands(reminder_cmds)
+                    await rm._apply_commands(reminder_cmds, source_channel_id=str(channel.id))
 
                 # SoC thought extraction
                 soc_enabled = self.config.get("soc_enabled", False)

@@ -60,6 +60,7 @@ DEFAULTS = {
     # Reminders & auto-wake
     "reminders_enabled": False,
     "reminders_channel_id": None,
+    "reminder_log_channel_id": None,
 }
 
 

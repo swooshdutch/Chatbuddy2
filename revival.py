@@ -141,7 +141,7 @@ class RevivalManager:
         if reminder_cmds:
             from reminders import ReminderManager
             rm = ReminderManager(self.bot, self.config)
-            rm._apply_commands(reminder_cmds)
+            await rm._apply_commands(reminder_cmds, source_channel_id=str(channel.id))
 
         if audio_bytes:
             audio_file = discord.File(fp=io.BytesIO(audio_bytes), filename="revival.wav")
@@ -285,7 +285,7 @@ class RevivalManager:
                 if reminder_cmds:
                     from reminders import ReminderManager
                     rm = ReminderManager(self.bot, self.config)
-                    rm._apply_commands(reminder_cmds)
+                    await rm._apply_commands(reminder_cmds, source_channel_id=str(channel.id))
 
                 if audio_bytes:
                     audio_file = discord.File(fp=io.BytesIO(audio_bytes), filename="revival_reply.wav")

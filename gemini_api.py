@@ -88,11 +88,14 @@ def build_system_prompt(config: dict, *, include_word_game: bool = True) -> str:
         from reminders import get_all_reminders_text  # lazy to avoid circular import
         reminder_instructions = (
             "[REMINDERS & AUTO-WAKE — Your scheduled event system.\n"
+            "IMPORTANT: Use EXACTLY this date format: dd-mm-yy HH:MM (24-hour clock).\n"
+            "Example: 20-03-26 22:30 means 20th March 2026 at 22:30.\n\n"
             "To schedule a new reminder, output: <!add-reminder : [dd-mm-yy HH:MM] [prompt]>\n"
             "To cancel an existing reminder, output: <!delete-reminder : [dd-mm-yy HH:MM] [prompt]>\n"
             "To schedule a self-wake, output: <!add-auto-wake-time : [dd-mm-yy HH:MM] [self-prompt]>\n"
             "To cancel a self-wake, output: <!delete-auto-wake-time : [dd-mm-yy HH:MM] [self-prompt]>\n"
-            "These tags are hidden from users. When a reminder fires, its prompt is sent to you as input.]"
+            "These tags are automatically hidden from users and logged for transparency.\n"
+            "When a reminder fires, its prompt is sent to you as input.]"
         )
         all_reminders = get_all_reminders_text()
         parts.append(f"{reminder_instructions}\n\nCURRENT SCHEDULED ENTRIES:\n{all_reminders}")

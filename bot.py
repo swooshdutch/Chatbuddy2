@@ -199,7 +199,7 @@ async def on_message(message: discord.Message):
 
         # Apply any reminder/wake-time commands the bot emitted
         if reminder_cmds and reminder_manager:
-            reminder_manager._apply_commands(reminder_cmds)
+            await reminder_manager._apply_commands(reminder_cmds, source_channel_id=str(message.channel.id))
 
         # SoC thought extraction
         response_text = await _handle_soc_extraction(response_text, bot, bot_config)
@@ -889,6 +889,30 @@ async def show_reminders_cmd(interaction: discord.Interaction):
         await interaction.followup.send(chunk, ephemeral=True)
 
 
+@bot.tree.command(name="set-reminder-channel", description="Set the channel where fired reminders are posted")
+@app_commands.describe(channel="The channel for reminder output")
+@app_commands.default_permissions(administrator=True)
+async def set_reminder_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    bot_config["reminders_channel_id"] = str(channel.id)
+    save_config(bot_config)
+    await interaction.response.send_message(
+        f"✅ Reminders will now fire in {channel.mention}.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="set-reminder-log-channel", description="Set the channel where reminder registrations are logged")
+@app_commands.describe(channel="The log channel for transparency")
+@app_commands.default_permissions(administrator=True)
+async def set_reminder_log_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    bot_config["reminder_log_channel_id"] = str(channel.id)
+    save_config(bot_config)
+    await interaction.response.send_message(
+        f"✅ Reminder log channel set to {channel.mention}.",
+        ephemeral=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Slash commands — Custom model settings
 # ---------------------------------------------------------------------------
@@ -1094,15 +1118,15 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(
         name="⏰ Reminders & Auto-Wake",
         value=(
-            "`/setup-reminders` — Enable/disable + set the output channel\n"
+            "`/setup-reminders` — Enable/disable reminders\n"
+            "`/set-reminder-channel` — Set the channel where reminders fire\n"
+            "`/set-reminder-log-channel` — Set a log channel for transparency\n"
             "`/add-reminder` — Add a named reminder (dd-mm-yy HH:MM)\n"
             "`/delete-reminder` — Delete a reminder by name\n"
-            "`/show-reminders` — Show all scheduled reminders and wake-times\n\n"
-            "The bot can also self-manage reminders using:\n"
-            "`<!add-reminder : [datetime] [prompt]>`\n"
-            "`<!delete-reminder : [datetime] [prompt]>`\n"
-            "`<!add-auto-wake-time : [datetime] [self-prompt]>`\n"
-            "`<!delete-auto-wake-time : [datetime] [self-prompt]>`"
+            "`/show-reminders` — Show all scheduled reminders & wake-times\n\n"
+            "The bot can also self-manage via hidden tags:\n"
+            "`<!add-reminder>`, `<!delete-reminder>`\n"
+            "`<!add-auto-wake-time>`, `<!delete-auto-wake-time>`"
         ),
         inline=False,
     )
