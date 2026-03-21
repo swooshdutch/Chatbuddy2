@@ -447,6 +447,56 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
 # Slash commands — Core settings
 # ---------------------------------------------------------------------------
 
+@bot.tree.command(name="set-api-context", description="Configure daily API usage context tracking")
+@app_commands.describe(
+    enabled="True = track requests and inject usage to AI, False = disabled",
+    limit="Max amount of requests per day (e.g. 500)",
+    reset_time="Reset time in 24h format (e.g. 00:00)",
+)
+@app_commands.default_permissions(administrator=True)
+async def set_api_context(interaction: discord.Interaction, enabled: bool, limit: int, reset_time: str):
+    import re
+    if not re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", reset_time):
+        await interaction.response.send_message("⚠️ Reset time must be in 24h HH:MM format (e.g. 00:00).", ephemeral=True)
+        return
+        
+    bot_config["api_context_enabled"] = enabled
+    bot_config["api_context_limit"] = limit
+    bot_config["api_context_reset_time"] = reset_time
+    save_config(bot_config)
+    
+    state = "enabled" if enabled else "disabled"
+    await interaction.response.send_message(
+        f"✅ API context tracking **{state}**.\n"
+        f"• Daily limit: **{limit}**\n"
+        f"• Reset time: **{reset_time}**",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="check-api-quota", description="Check the current daily API usage (if tracking is enabled)")
+async def check_api_quota(interaction: discord.Interaction):
+    if not bot_config.get("api_context_enabled", False):
+        await interaction.response.send_message(
+            "⚠️ API Context tracking is currently **disabled**. An administrator must enable it via `/set-api-context`.", 
+            ephemeral=True
+        )
+        return
+        
+    limit = bot_config.get("api_context_limit", 500)
+    usage = bot_config.get("api_context_current_usage", 0)
+    reset_time = bot_config.get("api_context_reset_time", "00:00")
+    last_reset = bot_config.get("api_context_last_reset_date", "Never")
+    
+    await interaction.response.send_message(
+        f"📊 **Daily API Quota Status**\n"
+        f"• Current Usage: **{usage} / {limit}** requests\n"
+        f"• Reset Time: **{reset_time}** (system time)\n"
+        f"• Last Reset Date: **{last_reset}**",
+        ephemeral=True
+    )
+
+
 @bot.tree.command(name="set-api-key", description="Set the Gemini API key")
 @app_commands.describe(key="Your Gemini API key")
 @app_commands.default_permissions(administrator=True)
@@ -1347,6 +1397,8 @@ async def help_command(interaction: discord.Interaction):
         name="⚙️ Core Settings",
         value=(
             "`/set-api-key` — Set the Gemini API key\n"
+            "`/set-api-context` — Track daily API quota in system prompt\n"
+            "`/check-api-quota` — Check the current tracked daily quota\n"
             "`/set-chat-history [limit]` : Set the maximum messages to remember (default 30)\n"
             "`/set-temp` — Set model temperature (0.0 – 2.0)\n"
             "`/set-api-endpoint-gemini` — Set the Gemini model endpoint\n"

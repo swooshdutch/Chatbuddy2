@@ -14,6 +14,11 @@ DEFAULTS = {
     "multimodal_enabled": False,
     "web_search_enabled": False,
     "duck_search_enabled": False,
+    "api_context_enabled": False,
+    "api_context_limit": 500,
+    "api_context_reset_time": "00:00",
+    "api_context_current_usage": 0,
+    "api_context_last_reset_date": "",
     # Dual model endpoints — one for each mode
     "model_endpoint_gemini": "gemini-2.0-flash",
     "model_endpoint_gemma": "",

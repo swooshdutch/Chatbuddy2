@@ -13,6 +13,8 @@ Audio clip mode (audio_enabled = True/False — fully independent of model_mode)
 
 import os
 import aiohttp
+from datetime import datetime
+import datetime as dt_module
 
 from config import save_config
 from utils import handle_soul_updates, extract_thoughts, extract_reminder_commands
@@ -100,6 +102,17 @@ def build_system_prompt(config: dict, *, include_word_game: bool = True) -> str:
         all_reminders = get_all_reminders_text()
         parts.append(f"{reminder_instructions}\n\nCURRENT SCHEDULED ENTRIES:\n{all_reminders}")
 
+    # Inject API Context Usage
+    if config.get("api_context_enabled", False):
+        limit = config.get("api_context_limit", 500)
+        usage = config.get("api_context_current_usage", 0)
+        reset_time = config.get("api_context_reset_time", "00:00")
+        api_text = (
+            f"# your daily api limit (when this number hits {limit}/{limit} you are no longer able to output until after {reset_time}), "
+            f"you are currently at {usage}/{limit}."
+        )
+        parts.append(api_text)
+
     return "\n\n".join(p for p in parts if p)
 
 
@@ -178,6 +191,32 @@ async def generate(
     api_key = config.get("api_key")
     if not api_key:
         return MSG_NO_KEY, None, [], []
+
+    # ── API Context Tracker Increment ──
+    if config.get("api_context_enabled", False):
+        try:
+            now = datetime.now()
+            reset_time_str = config.get("api_context_reset_time", "00:00")
+            parts_rt = reset_time_str.split(":")
+            reset_hour = int(parts_rt[0]) if len(parts_rt) > 0 else 0
+            reset_minute = int(parts_rt[1]) if len(parts_rt) > 1 else 0
+            
+            reset_threshold = now.replace(hour=reset_hour, minute=reset_minute, second=0, microsecond=0)
+            
+            if now >= reset_threshold:
+                effective_date = now.strftime("%Y-%m-%d")
+            else:
+                effective_date = (now - dt_module.timedelta(days=1)).strftime("%Y-%m-%d")
+                
+            last_reset = config.get("api_context_last_reset_date", "")
+            if last_reset != effective_date:
+                config["api_context_current_usage"] = 0
+                config["api_context_last_reset_date"] = effective_date
+                
+            config["api_context_current_usage"] = config.get("api_context_current_usage", 0) + 1
+            save_config(config)
+        except Exception as e:
+            print(f"[ChatBuddy] API Context tracker error: {e}")
 
     model_mode    = config.get("model_mode", "gemini")
     # Treat legacy "default" the same as "gemini"

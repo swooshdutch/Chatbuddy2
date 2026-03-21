@@ -75,6 +75,8 @@ Mention the bot (`@ChatBuddy`) or reply to one of its messages. That's it!
 | Command | Description |
 |---|---|
 | `/set-api-key` | Set the Gemini API key |
+| `/set-api-context` | Enable internal daily LLM API quota tracking / logic in system prompt |
+| `/check-api-quota` | Check the current tracked daily quota visually |
 | `/set-chat-history` | Set how many messages of context the bot receives (default: 30) |
 | `/set-temp` | Set model temperature (0.0 – 2.0) |
 | `/set-api-endpoint-gemini` | Set the Gemini model endpoint |
