@@ -235,7 +235,14 @@ async def generate(
     }
 
     if config.get("multimodal_enabled", False):
-        text_body["tools"] = [{"googleSearch": {}}]
+        text_body["tools"] = [{
+            "googleSearchRetrieval": {
+                "dynamicRetrievalConfig": {
+                    "mode": "MODE_DYNAMIC",
+                    "dynamicThreshold": 0.3
+                }
+            }
+        }]
 
     # Only standard Gemini mode uses the top-level systemInstruction field
     if not inject_prompt and system_prompt:
