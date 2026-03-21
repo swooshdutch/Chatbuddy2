@@ -250,15 +250,8 @@ async def generate(
         },
     }
 
-    if config.get("multimodal_enabled", False) and _requires_search(prompt):
-        text_body["tools"] = [{
-            "googleSearchRetrieval": {
-                "dynamicRetrievalConfig": {
-                    "mode": "MODE_DYNAMIC",
-                    "dynamicThreshold": 0.3
-                }
-            }
-        }]
+    if config.get("web_search_enabled", False) and _requires_search(prompt):
+        text_body["tools"] = [{"googleSearch": {}}]
 
     # Only standard Gemini mode uses the top-level systemInstruction field
     if not inject_prompt and system_prompt:
@@ -280,14 +273,16 @@ async def generate(
 
         if status == 429:
             print(f"[ChatBuddy] Text API error 429 (Rate Limit): {data}")
-            return MSG_RATE_LIMIT, None, [], []
+            err_msg = str(data.get("error", {}).get("message", "Rate Limit / Quota Exceeded"))
+            return f"⚠️ **Google API Error (429 Rate Limit)**:\n{err_msg}\n*(If you requested a search, your free tier quota likely does not support Search Grounding on this model!)*", None, [], []
 
         if status != 200:
             err = str(data)
             if "SAFETY" in err.upper() or "blocked" in err.lower():
                 return MSG_SAFETY_BLOCK, None, [], []
             print(f"[ChatBuddy] Text API error {status}: {data}")
-            return MSG_GENERIC_ERROR, None, [], []
+            err_msg = str(data.get("error", {}).get("message", err))
+            return f"⚠️ **Google API Error ({status})**:\n{err_msg}", None, [], []
 
         if data.get("promptFeedback", {}).get("blockReason"):
             return MSG_SAFETY_BLOCK, None, [], []

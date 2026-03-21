@@ -382,14 +382,24 @@ async def set_api_key(interaction: discord.Interaction, key: str):
     await interaction.response.send_message("✅ API key has been set and saved.", ephemeral=True)
 
 
-@bot.tree.command(name="set-multimodal", description="Enable or disable full multimodal support (image/audio + search)")
-@app_commands.describe(enabled="True = bot can view images, hear audio, and search web. False = disabled (default)")
+@bot.tree.command(name="set-multimodal", description="Enable or disable multimodal support (images and audio)")
+@app_commands.describe(enabled="True = bot can view images and hear audio. False = disabled (default)")
 @app_commands.default_permissions(administrator=True)
 async def set_multimodal(interaction: discord.Interaction, enabled: bool):
     bot_config["multimodal_enabled"] = enabled
     save_config(bot_config)
-    state = "**enabled** 🌐" if enabled else "**disabled** 🚫"
+    state = "**enabled** 🖼️/🎤" if enabled else "**disabled** 🚫"
     await interaction.response.send_message(f"✅ Multimodal capabilities {state}.", ephemeral=True)
+
+
+@bot.tree.command(name="set-gemini-web-search", description="Enable or disable Gemini Google Search Grounding")
+@app_commands.describe(enabled="True = bot can search the web (requires API quota). False = disabled (default)")
+@app_commands.default_permissions(administrator=True)
+async def set_gemini_web_search(interaction: discord.Interaction, enabled: bool):
+    bot_config["web_search_enabled"] = enabled
+    save_config(bot_config)
+    state = "**enabled** 🌍" if enabled else "**disabled** 🚫"
+    await interaction.response.send_message(f"✅ Web search capabilities {state}.", ephemeral=True)
 
 
 @bot.tree.command(name="set-chat-history", description="Set how many messages of context the bot receives")
