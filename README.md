@@ -85,19 +85,25 @@ Mention the bot (`@ChatBuddy`) or reply to one of its messages. That's it!
 | `/show-sys-instruct` | Display the full effective system prompt |
 | `/set-model-mode` | Switch between `gemini`, `gemma`, and `custom` |
 
-### 📝 Dynamic & Game Prompts
+### 🌐 Multimodal & Search
 
 | Command | Description |
 |---|---|
-| `/set-dynamic-system-prompt` | Set an extra prompt appended after the main prompt + enable/disable |
+| `/set-multimodal` | Enable Image and Audio analysis for incoming payloads |
+| `/set-gemini-web-search` | Enable internal Google Search Grounding for API responses (requires quota) |
+| `/set-duck-search` | Enable free DuckDuckGo Python Search capabilities |
+
+### 🧠 Soul Memory
+
+| Command | Description |
+|---|---|
 | `/set-soul` | Enable/disable the self-updating soul memory |
 | `/show-soul` | View current soul memory |
-| `/edit-soul` | Manually adjust the soul memory |
+| `/edit-soul-add-entry` | Add/append a new memory entry manually |
+| `/edit-soul-overwrite` | Overwrite an existing memory entry manually |
+| `/edit-soul-delete-entry` | Delete a given memory entry manually |
+| `/wipe-soul` | Wipe all memory entries immediately |
 | `/set-soul-channel` | Set the channel to log soul updates + enable/disable |
-| `/set-word-game` | Set word game rules (use `{secret-word}` placeholder) + enable/disable |
-| `/set-word-game-selector-prompt` | Set the hidden-turn prompt the model uses to pick a word |
-| `/set-secret-word` | Trigger a hidden turn to pick a new secret word *(role-gated)* |
-| `/set-secret-word-permission` | Grant or revoke a role's access to `/set-secret-word` |
 
 **💡 Note on Soul Memory:** 
 To use the Soul feature effectively, ensure you provide instructions in the main system prompt (via `/set-sys-instruct`) telling the bot *when* and *what* it should remember. The bot interacts with the soul file by outputting these exact tags in its response:
@@ -105,6 +111,16 @@ To use the Soul feature effectively, ensure you provide instructions in the main
 - `<!soul-update[id]: text>` to append to an existing memory.
 - `<!soul-override[id]: text>` to completely overwrite a memory ID.
 - `<!soul-delete[id]>` to remove a memory entirely.
+
+### 📝 Dynamic & Game Prompts
+
+| Command | Description |
+|---|---|
+| `/set-dynamic-system-prompt` | Set an extra prompt appended after the main prompt + enable/disable |
+| `/set-word-game` | Set word game rules (use `{secret-word}` placeholder) + enable/disable |
+| `/set-word-game-selector-prompt` | Set the hidden-turn prompt the model uses to pick a word |
+| `/set-secret-word` | Trigger a hidden turn to pick a new secret word *(role-gated)* |
+| `/set-secret-word-permission` | Grant or revoke a role's access to `/set-secret-word` |
 
 ### 🔊 Audio Clip Mode
 
@@ -146,6 +162,35 @@ The bot checks every N seconds for new messages. After the configured idle timeo
 | `/set-chat-revival` | Configure periodic chat revival + enable/disable |
 | `/set-cr-params` | Set active window duration & check interval |
 | `/set-cr-leave-msg` | Set the goodbye message after revival expires |
+
+### ⏰ Reminders & Auto-Wake
+
+| Command | Description |
+|---|---|
+| `/setup-reminders` | Enable/disable reminders and set their output channel |
+| `/set-reminder-channel` | Set the channel where fired reminders are posted |
+| `/set-reminder-log-channel` | Set the channel where reminder registrations are logged |
+| `/add-reminder` | Manually add a named reminder (dd-mm-yy HH:MM) |
+| `/delete-reminder` | Manually delete a reminder by name |
+| `/show-reminders` | Show all currently scheduled reminders and auto-wake times |
+
+**💡 Note on Reminders:** 
+The bot manages its own reminders via XML-style output tags. Instruct it to output:
+- `<!add-reminder>` / `<!delete-reminder>`
+- `<!add-auto-wake-time>` / `<!delete-auto-wake-time>`
+
+### 🤖 Bot-to-Bot Response
+
+| Command | Description |
+|---|---|
+| `/set-respond-to-bot` | Enable or disable the bot responding to other bots |
+| `/set-respond-bot-limit` | Set a limit (1-9) to stop responding after consecutive bot messages |
+
+### 💓 Heartbeat
+
+| Command | Description |
+|---|---|
+| `/set-heartbeat` | Configure and enable a periodic heartbeat (fires unconditionally on an interval) |
 
 ---
 

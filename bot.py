@@ -1346,9 +1346,8 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(
         name="⚙️ Core Settings",
         value=(
-            "`/set-gemini-web-search [true/false]` : Enable internal Gemini Search.\n"
-            "`/set-duck-search [true/false]` : Enable free Python DuckDuckGo Search capabilities.\n"
-            "`/set-chat-history [limit]` : Set the maximum messages to remember (default 30).\n"
+            "`/set-api-key` — Set the Gemini API key\n"
+            "`/set-chat-history [limit]` : Set the maximum messages to remember (default 30)\n"
             "`/set-temp` — Set model temperature (0.0 – 2.0)\n"
             "`/set-api-endpoint-gemini` — Set the Gemini model endpoint\n"
             "`/set-api-endpoint-gemma` — Set the Gemma model endpoint\n"
@@ -1362,14 +1361,34 @@ async def help_command(interaction: discord.Interaction):
     )
 
     embed.add_field(
+        name="🌐 Multimodal & Search",
+        value=(
+            "`/set-multimodal [true/false]` : Enable Image and Audio analysis\n"
+            "`/set-gemini-web-search [true/false]` : Enable internal Gemini Search\n"
+            "`/set-duck-search [true/false]` : Enable free Python DuckDuckGo Search"
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="🧠 Soul Memory",
+        value=(
+            "`/set-soul` — Enable/disable the self-updating soul memory\n"
+            "`/show-soul` — View current soul memory\n"
+            "`/edit-soul-add-entry` — Add/append a new memory entry manually\n"
+            "`/edit-soul-overwrite` — Overwrite an existing memory entry manually\n"
+            "`/edit-soul-delete-entry` — Delete a given memory entry manually\n"
+            "`/wipe-soul` — Wipe all memory entries immediately\n"
+            "`/set-soul-channel` — Set the channel to log soul updates\n"
+            "*Note: The bot uses `<!soul-add-new[id]: text>`, `<!soul-update[id]: text>`, `<!soul-override[id]: text>`, or `<!soul-delete[id]>`.*"
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
         name="📝 Dynamic & Game Prompts",
         value=(
             "`/set-dynamic-system-prompt` — Set an extra prompt (appended after main) + enable/disable\n"
-            "`/set-soul` — Enable/disable the self-updating soul memory\n"
-            "`/show-soul` — View current soul memory\n"
-            "`/edit-soul` — Manually adjust the soul memory\n"
-            "`/set-soul-channel` — Set the channel to log soul updates + enable/disable\n"
-            "*Note: For Soul to work best, instruct the bot in its system prompt to save memories using `<!soul-add-new[id]: text>`, `<!soul-update[id]: text>`, `<!soul-override[id]: text>`, or `<!soul-delete[id]>`.*\n\n"
             "`/set-word-game` — Set word game rules (`{secret-word}` placeholder) + enable/disable\n"
             "`/set-word-game-selector-prompt` — Set the hidden-turn prompt for word selection\n"
             "`/set-secret-word` — Trigger a hidden turn to pick a new secret word (role-gated)\n"
