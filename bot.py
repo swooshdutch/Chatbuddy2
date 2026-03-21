@@ -245,10 +245,18 @@ async def _generate_and_respond(message: discord.Message):
         # SoC context injection (after chat history)
         context += await _read_soc_context(bot, bot_config)
 
+        attachments_data = []
+        if bot_config.get("multimodal_enabled", False):
+            for a in message.attachments:
+                if a.content_type and (a.content_type.startswith("image/") or a.content_type.startswith("audio/")):
+                    file_bytes = await a.read()
+                    attachments_data.append({"mime_type": a.content_type, "data": file_bytes})
+
         response_text, audio_bytes, soul_logs, reminder_cmds = await generate(
             user_text, context, bot_config,
             speaker_name=message.author.display_name,
             speaker_id=str(message.author.id),
+            attachments=attachments_data,
         )
 
         # Apply any reminder/wake-time commands the bot emitted
@@ -317,12 +325,21 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
 
         context += await _read_soc_context(bot, bot_config)
 
+        attachments_data = []
+        if bot_config.get("multimodal_enabled", False):
+            for m in batch:
+                for a in m.attachments:
+                    if a.content_type and (a.content_type.startswith("image/") or a.content_type.startswith("audio/")):
+                        file_bytes = await a.read()
+                        attachments_data.append({"mime_type": a.content_type, "data": file_bytes})
+
         # Use the last message's author info for speaker metadata
         last_msg = batch[-1]
         response_text, audio_bytes, soul_logs, reminder_cmds = await generate(
             batched_input, context, bot_config,
             speaker_name=last_msg.author.display_name,
             speaker_id=str(last_msg.author.id),
+            attachments=attachments_data,
         )
 
         if reminder_cmds and reminder_manager:
@@ -363,6 +380,16 @@ async def set_api_key(interaction: discord.Interaction, key: str):
     bot_config["api_key"] = key
     save_config(bot_config)
     await interaction.response.send_message("✅ API key has been set and saved.", ephemeral=True)
+
+
+@bot.tree.command(name="set-multimodal", description="Enable or disable full multimodal support (image/audio + search)")
+@app_commands.describe(enabled="True = bot can view images, hear audio, and search web. False = disabled (default)")
+@app_commands.default_permissions(administrator=True)
+async def set_multimodal(interaction: discord.Interaction, enabled: bool):
+    bot_config["multimodal_enabled"] = enabled
+    save_config(bot_config)
+    state = "**enabled** 🌐" if enabled else "**disabled** 🚫"
+    await interaction.response.send_message(f"✅ Multimodal capabilities {state}.", ephemeral=True)
 
 
 @bot.tree.command(name="set-chat-history", description="Set how many messages of context the bot receives")

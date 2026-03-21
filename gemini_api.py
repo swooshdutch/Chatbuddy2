@@ -151,6 +151,7 @@ async def generate(
     speaker_name: str = "",
     speaker_id: str = "",
     system_prompt_override: str | None = None,
+    attachments: list[dict] | None = None,
 ) -> tuple[str, bytes | None, list[str], list[tuple[str, str, str]]]:
     """
     Call the Gemini API and return (text_reply, wav_bytes_or_None, soul_logs, reminder_cmds).
@@ -208,17 +209,33 @@ async def generate(
     inject_prompt = gemma_mode or custom_mode
     user_text = _build_user_text(prompt, context, system_prompt, inject_prompt, speaker_name, speaker_id)
 
+    parts = []
+    if attachments:
+        import base64
+        for att in attachments:
+            b64_data = base64.b64encode(att["data"]).decode("utf-8")
+            parts.append({
+                "inlineData": {
+                    "mimeType": att["mime_type"],
+                    "data": b64_data
+                }
+            })
+    parts.append({"text": user_text})
+
     text_body: dict = {
         "contents": [
             {
                 "role": "user",
-                "parts": [{"text": user_text}],
+                "parts": parts,
             }
         ],
         "generationConfig": {
             "temperature": temperature,
         },
     }
+
+    if config.get("multimodal_enabled", False):
+        text_body["tools"] = [{"googleSearch": {}}]
 
     # Only standard Gemini mode uses the top-level systemInstruction field
     if not inject_prompt and system_prompt:

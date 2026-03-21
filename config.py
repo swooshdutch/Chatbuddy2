@@ -11,6 +11,7 @@ CONFIG_FILE = "config.json"
 DEFAULTS = {
     "api_key": None,
     "system_prompt": "You are a helpful Discord chatbot called ChatBuddy.",
+    "multimodal_enabled": False,
     # Dual model endpoints — one for each mode
     "model_endpoint_gemini": "gemini-2.0-flash",
     "model_endpoint_gemma": "",
