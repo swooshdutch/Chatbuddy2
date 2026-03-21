@@ -5,4 +5,4 @@ websockets>=12.0
 SpeechRecognition==3.11.0
 google-genai==0.3.0
 beautifulsoup4==4.12.3
-duckduckgo-search==8.1.1
+ddgs==9.11.4

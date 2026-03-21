@@ -1,5 +1,5 @@
 import asyncio
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 def get_duckduckgo_context(query: str, max_results: int = 3) -> str:
     """
