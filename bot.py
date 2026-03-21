@@ -1619,9 +1619,9 @@ async def set_hardcore_tamagochi_mode(interaction: discord.Interaction, enabled:
         if not bot_config.get("tamagotchi_medicine_emoji", []):
             missing.append("`/set-hardcore-tamagochi-medicine` — medicine emoji + heal amount")
         if not bot_config.get("_hc_threshold_set", False):
-            missing.append("`/set-hardcore-tamagochi-sickness-thresh-hold` — sickness thresholds")
+            missing.append("`/set-hc-sick-threshold` — sickness thresholds")
         if not bot_config.get("_hc_increase_set", False):
-            missing.append("`/set-hardcore-tamagochi-sickness-increase` — sickness increase rates")
+            missing.append("`/set-hc-sick-increase` — sickness increase rates")
 
         if missing:
             missing_text = "\n".join(f"• {m}" for m in missing)
@@ -1701,7 +1701,7 @@ async def set_hardcore_tamagochi_medicine(
     )
 
 
-@bot.tree.command(name="set-hardcore-tamagochi-sickness-thresh-hold", description="Set stat thresholds below which sickness increases")
+@bot.tree.command(name="set-hc-sick-threshold", description="Set stat thresholds below which sickness increases")
 @app_commands.describe(
     food="Sickness increases when hunger drops below this value",
     thirst="Sickness increases when thirst drops below this value",
@@ -1730,7 +1730,7 @@ async def set_hardcore_tamagochi_sickness_threshold(
     )
 
 
-@bot.tree.command(name="set-hardcore-tamagochi-sickness-increase", description="Set how much sickness increases per turn when below threshold")
+@bot.tree.command(name="set-hc-sick-increase", description="Set how much sickness increases per turn when below threshold")
 @app_commands.describe(
     food="Sickness added per turn when hunger is below threshold (max 2 decimals, max 99)",
     thirst="Sickness added per turn when thirst is below threshold (max 2 decimals, max 99)",
@@ -2059,8 +2059,8 @@ async def help_command(interaction: discord.Interaction):
         value=(
             "`/set-hardcore-sickness-stat` — Set max sickness (death threshold)\n"
             "`/set-hardcore-tamagochi-medicine` — Set medicine emoji + heal amount\n"
-            "`/set-hardcore-tamagochi-sickness-thresh-hold` — Set thresholds below which sickness increases\n"
-            "`/set-hardcore-tamagochi-sickness-increase` — Set sickness increase per turn per stat\n"
+            "`/set-hc-sick-threshold` — Set thresholds below which sickness increases\n"
+            "`/set-hc-sick-increase` — Set sickness increase per turn per stat\n"
             "`/set-tamagochi-rip-message` — Set custom death message (empty = default)\n"
             "`/set-hardcore-tamagochi-mode` — Enable/disable hardcore (all settings must be configured)\n\n"
             "When stats drop below their thresholds, sickness increases each turn. "
