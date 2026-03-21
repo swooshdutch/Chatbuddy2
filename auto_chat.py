@@ -164,6 +164,11 @@ class AutoChatManager:
                                 + "\n[END YOUR PREVIOUS THOUGHTS]\n"
                             )
 
+                # Tamagotchi: consume emoji from the user's message
+                if self.config.get("tamagotchi_enabled", False):
+                    from tamagotchi import consume_emoji
+                    consume_emoji(last_msg.content, self.config)
+
                 response_text, audio_bytes, soul_logs, reminder_cmds = await generate(
                     prompt=last_msg.clean_content or "(empty message)",
                     context=context,
@@ -171,6 +176,11 @@ class AutoChatManager:
                     speaker_name=last_msg.author.display_name,
                     speaker_id=str(last_msg.author.id),
                 )
+
+                # Tamagotchi: deplete stats after inference
+                if self.config.get("tamagotchi_enabled", False):
+                    from tamagotchi import deplete_stats
+                    deplete_stats(self.config)
 
                 # Apply reminder commands the bot may have emitted
                 if reminder_cmds:
@@ -195,6 +205,12 @@ class AutoChatManager:
                     await channel.send(file=audio_file)
 
                 if response_text:
+                    # Tamagotchi: append stats footer only if there is visible text
+                    if self.config.get("tamagotchi_enabled", False):
+                        from tamagotchi import build_tamagotchi_footer
+                        tama_footer = build_tamagotchi_footer(self.config)
+                        if tama_footer and response_text.strip():
+                            response_text = response_text.rstrip() + "\n" + tama_footer
                     for chunk in chunk_message(response_text):
                         await channel.send(chunk)
 

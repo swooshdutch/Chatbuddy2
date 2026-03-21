@@ -137,6 +137,11 @@ class RevivalManager:
             revival_system_instruct=system_instruct,
         )
 
+        # Tamagotchi: deplete stats after inference (no emoji consumption — bot-initiated)
+        if self.config.get("tamagotchi_enabled", False):
+            from tamagotchi import deplete_stats
+            deplete_stats(self.config)
+
         # Apply reminder commands the bot may have emitted
         if reminder_cmds:
             from reminders import ReminderManager
@@ -159,6 +164,12 @@ class RevivalManager:
             response_text = clean_text
 
             response_text = resolve_custom_emoji(response_text, channel.guild)
+            # Tamagotchi: append stats footer if there is visible text
+            if self.config.get("tamagotchi_enabled", False):
+                from tamagotchi import build_tamagotchi_footer
+                tama_footer = build_tamagotchi_footer(self.config)
+                if tama_footer and response_text.strip():
+                    response_text = response_text.rstrip() + "\n" + tama_footer
             footer = f"\n-# :loudspeaker: chat reviver active for : {active_minutes}m 0s"
             chunks = chunk_message(response_text)
             # Append the footer to the last chunk
@@ -281,6 +292,11 @@ class RevivalManager:
                     revival_system_instruct=system_instruct,
                 )
 
+                # Tamagotchi: deplete stats after inference (no emoji consumption — bot-initiated)
+                if self.config.get("tamagotchi_enabled", False):
+                    from tamagotchi import deplete_stats
+                    deplete_stats(self.config)
+
                 # Apply reminder commands the bot may have emitted
                 if reminder_cmds:
                     from reminders import ReminderManager
@@ -303,6 +319,12 @@ class RevivalManager:
                     response_text = clean_text
 
                     response_text = resolve_custom_emoji(response_text, channel.guild)
+                    # Tamagotchi: append stats footer if there is visible text
+                    if self.config.get("tamagotchi_enabled", False):
+                        from tamagotchi import build_tamagotchi_footer
+                        tama_footer = build_tamagotchi_footer(self.config)
+                        if tama_footer and response_text.strip():
+                            response_text = response_text.rstrip() + "\n" + tama_footer
                     footer = f"\n-# :loudspeaker: chat reviver active for : {remaining_m}m {remaining_s}s"
                     chunks = chunk_message(response_text)
                     chunks[-1] += footer

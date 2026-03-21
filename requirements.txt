@@ -6,3 +6,4 @@ SpeechRecognition==3.11.0
 google-genai==0.3.0
 beautifulsoup4==4.12.3
 ddgs==9.11.4
+emoji>=2.0

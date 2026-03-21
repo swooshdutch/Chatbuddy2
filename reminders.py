@@ -355,6 +355,11 @@ class ReminderManager:
                 config=self.config,
             )
 
+            # Tamagotchi: deplete stats after inference (no emoji consumption — bot-initiated)
+            if self.config.get("tamagotchi_enabled", False):
+                from tamagotchi import deplete_stats
+                deplete_stats(self.config)
+
             # Process reminder/wake-time tags the bot may have included
             response_text, new_cmds = extract_reminder_commands(response_text)
             if new_cmds:
@@ -383,6 +388,12 @@ class ReminderManager:
             # Send text response
             if response_text:
                 kind_label = "⏰ Reminder" if kind == "reminder" else "🔔 Auto-Wake"
+                # Tamagotchi: append stats footer if there is visible text
+                if self.config.get("tamagotchi_enabled", False):
+                    from tamagotchi import build_tamagotchi_footer
+                    tama_footer = build_tamagotchi_footer(self.config)
+                    if tama_footer and response_text.strip():
+                        response_text = response_text.rstrip() + "\n" + tama_footer
                 footer = f"\n-# {kind_label}: *{entry_name}*"
                 chunks = chunk_message(response_text)
                 chunks[-1] += footer

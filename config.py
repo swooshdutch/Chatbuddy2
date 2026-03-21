@@ -77,6 +77,25 @@ DEFAULTS = {
     "heartbeat_interval_minutes": 60,
     "heartbeat_channel_id": None,
     "heartbeat_prompt": "",
+    # Tamagotchi minigame
+    "tamagotchi_enabled": False,
+    "tamagotchi_rules_set": False,
+    "tamagotchi_food_emoji": [],
+    "tamagotchi_drink_emoji": [],
+    "tamagotchi_entertainment_emoji": [],
+    "tamagotchi_max_hunger": 10,
+    "tamagotchi_max_thirst": 10,
+    "tamagotchi_max_happiness": 10,
+    "tamagotchi_hunger": 10.0,
+    "tamagotchi_thirst": 10.0,
+    "tamagotchi_happiness": 10.0,
+    "tamagotchi_depletion_food": 1.0,
+    "tamagotchi_depletion_thirst": 1.0,
+    "tamagotchi_depletion_happiness": 1.0,
+    "tamagotchi_fill_food": 1.0,
+    "tamagotchi_fill_thirst": 1.0,
+    "tamagotchi_fill_happiness": 1.0,
+    "tamagotchi_max_consumption": 0,
 }
 
 

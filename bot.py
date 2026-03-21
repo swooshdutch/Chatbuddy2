@@ -22,6 +22,7 @@ from revival import RevivalManager
 from auto_chat import AutoChatManager
 from reminders import ReminderManager
 from heartbeat import HeartbeatManager
+from tamagotchi import consume_emoji, deplete_stats, build_tamagotchi_footer
 
 # ---------------------------------------------------------------------------
 # Environment
@@ -231,6 +232,9 @@ async def _generate_and_respond(message: discord.Message):
         if not user_text:
             user_text = "(empty message)"
 
+        # Tamagotchi: consume emoji from user input BEFORE generate
+        consume_emoji(message.content, bot_config)
+
         import re
         if bot_config.get("duck_search_enabled", False):
             if "!search" in user_text.lower():
@@ -271,6 +275,9 @@ async def _generate_and_respond(message: discord.Message):
             attachments=attachments_data,
         )
 
+        # Tamagotchi: deplete stats after generate
+        deplete_stats(bot_config)
+
         # AI-triggered 2-stage turn for Web Search
         import re
         if bot_config.get("duck_search_enabled", False):
@@ -293,6 +300,8 @@ async def _generate_and_respond(message: discord.Message):
                     speaker_id=str(message.author.id),
                     attachments=None,  # Do not resend attachments on the invisible turn
                 )
+                # Tamagotchi: deplete stats for the second inference too
+                deplete_stats(bot_config)
                 if soul_logs2: soul_logs.extend(soul_logs2)
                 if reminder_cmds2: reminder_cmds.extend(reminder_cmds2)
 
@@ -305,6 +314,11 @@ async def _generate_and_respond(message: discord.Message):
 
         # Resolve custom emoji shortcodes before sending
         response_text = resolve_custom_emoji(response_text, message.guild)
+
+        # Tamagotchi: append stats footer only if there is visible text to send
+        tama_footer = build_tamagotchi_footer(bot_config)
+        if tama_footer and response_text.strip():
+            response_text = response_text.rstrip() + "\n" + tama_footer
 
         if audio_bytes:
             audio_file = discord.File(fp=io.BytesIO(audio_bytes), filename="chatbuddy_voice.wav")
@@ -349,6 +363,10 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
             + "\n".join(batch_lines)
         )
 
+        # Tamagotchi: consume emoji from all user messages in the batch
+        for msg in batch:
+            consume_emoji(msg.content, bot_config)
+
         import re
         if bot_config.get("duck_search_enabled", False):
             if "!search" in batched_input.lower():
@@ -391,6 +409,9 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
             attachments=attachments_data,
         )
 
+        # Tamagotchi: deplete stats after generate
+        deplete_stats(bot_config)
+
         # AI-triggered 2-stage turn for Web Search
         import re
         if bot_config.get("duck_search_enabled", False):
@@ -413,6 +434,8 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
                     speaker_id=str(last_msg.author.id),
                     attachments=None,  # Do not resend attachments on the invisible turn
                 )
+                # Tamagotchi: deplete stats for the second inference too
+                deplete_stats(bot_config)
                 if soul_logs2: soul_logs.extend(soul_logs2)
                 if reminder_cmds2: reminder_cmds.extend(reminder_cmds2)
 
@@ -421,6 +444,11 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
 
         response_text = await _handle_soc_extraction(response_text, bot, bot_config)
         response_text = resolve_custom_emoji(response_text, channel.guild)
+
+        # Tamagotchi: append stats footer only if there is visible text to send
+        tama_footer = build_tamagotchi_footer(bot_config)
+        if tama_footer and response_text.strip():
+            response_text = response_text.rstrip() + "\n" + tama_footer
 
         if audio_bytes:
             audio_file = discord.File(fp=io.BytesIO(audio_bytes), filename="chatbuddy_voice.wav")
@@ -1277,6 +1305,225 @@ async def set_heartbeat_cmd(
 
 
 # ---------------------------------------------------------------------------
+# Slash commands — Tamagotchi minigame
+# ---------------------------------------------------------------------------
+
+from tamagotchi import validate_rate, parse_emoji_list
+
+
+@bot.tree.command(name="set-tamagochi-mode", description="Enable or disable Tamagotchi mode")
+@app_commands.describe(enabled="True to enable, False to disable")
+@app_commands.default_permissions(administrator=True)
+async def set_tamagochi_mode(interaction: discord.Interaction, enabled: bool):
+    if enabled and not bot_config.get("tamagotchi_rules_set", False):
+        await interaction.response.send_message(
+            "⚠️ Cannot enable Tamagotchi mode — rules have not been set yet.\n"
+            "Run `/set-tamagochi-rules` first to configure accepted emoji and stat limits.",
+            ephemeral=True,
+        )
+        return
+    bot_config["tamagotchi_enabled"] = enabled
+    save_config(bot_config)
+    state = "**enabled** 🐣" if enabled else "**disabled** 🚫"
+    await interaction.response.send_message(
+        f"✅ Tamagotchi mode {state}.", ephemeral=True
+    )
+
+
+@bot.tree.command(name="set-tamagochi-rules", description="Set the Tamagotchi accepted emoji and stat limits")
+@app_commands.describe(
+    food_emoji="Accepted food emoji (e.g. 🍔🍕🍩)",
+    drink_emoji="Accepted drink emoji (e.g. 💧🥤☕)",
+    entertainment_emoji="Accepted entertainment emoji (e.g. 🎮🎲🎵)",
+    hunger="Maximum hunger stat value",
+    thirst="Maximum thirst stat value",
+    happiness="Maximum happiness stat value",
+)
+@app_commands.default_permissions(administrator=True)
+async def set_tamagochi_rules(
+    interaction: discord.Interaction,
+    food_emoji: str,
+    drink_emoji: str,
+    entertainment_emoji: str,
+    hunger: int,
+    thirst: int,
+    happiness: int,
+):
+    if hunger < 1 or thirst < 1 or happiness < 1:
+        await interaction.response.send_message(
+            "⚠️ All stat maximums must be at least 1.", ephemeral=True
+        )
+        return
+
+    food_list = parse_emoji_list(food_emoji)
+    drink_list = parse_emoji_list(drink_emoji)
+    ent_list = parse_emoji_list(entertainment_emoji)
+
+    if not food_list and not drink_list and not ent_list:
+        await interaction.response.send_message(
+            "⚠️ No valid emoji detected. Please include at least one emoji in your input.",
+            ephemeral=True,
+        )
+        return
+
+    bot_config["tamagotchi_food_emoji"] = food_list
+    bot_config["tamagotchi_drink_emoji"] = drink_list
+    bot_config["tamagotchi_entertainment_emoji"] = ent_list
+    bot_config["tamagotchi_max_hunger"] = hunger
+    bot_config["tamagotchi_max_thirst"] = thirst
+    bot_config["tamagotchi_max_happiness"] = happiness
+    # Reset current stats to max on rule setup
+    bot_config["tamagotchi_hunger"] = float(hunger)
+    bot_config["tamagotchi_thirst"] = float(thirst)
+    bot_config["tamagotchi_happiness"] = float(happiness)
+    bot_config["tamagotchi_rules_set"] = True
+    save_config(bot_config)
+
+    await interaction.response.send_message(
+        f"✅ Tamagotchi rules configured!\n"
+        f"• Food emoji: {' '.join(food_list) or '(none)'}\n"
+        f"• Drink emoji: {' '.join(drink_list) or '(none)'}\n"
+        f"• Entertainment emoji: {' '.join(ent_list) or '(none)'}\n"
+        f"• Hunger max: **{hunger}** | Thirst max: **{thirst}** | Happiness max: **{happiness}**\n"
+        f"• Current stats reset to max values.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="set-tamagochi-depletion-rate", description="Set how much each stat decreases per inference")
+@app_commands.describe(
+    food="Hunger depletion per inference (max 2 decimals, max 99)",
+    thirst="Thirst depletion per inference (max 2 decimals, max 99)",
+    happiness="Happiness depletion per inference (max 2 decimals, max 99)",
+)
+@app_commands.default_permissions(administrator=True)
+async def set_tamagochi_depletion_rate(
+    interaction: discord.Interaction,
+    food: float,
+    thirst: float,
+    happiness: float,
+):
+    for name, val in [("food", food), ("thirst", thirst), ("happiness", happiness)]:
+        if not validate_rate(val):
+            await interaction.response.send_message(
+                f"⚠️ Invalid **{name}** rate: `{val}`. Must have at most 2 decimal places and be ≤ 99.",
+                ephemeral=True,
+            )
+            return
+    bot_config["tamagotchi_depletion_food"] = food
+    bot_config["tamagotchi_depletion_thirst"] = thirst
+    bot_config["tamagotchi_depletion_happiness"] = happiness
+    save_config(bot_config)
+    await interaction.response.send_message(
+        f"✅ Tamagotchi depletion rates set:\n"
+        f"• Hunger: **{food}**/turn | Thirst: **{thirst}**/turn | Happiness: **{happiness}**/turn",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="set-tamagochi-fill-rate", description="Set how much each stat increases per emoji consumed")
+@app_commands.describe(
+    food="Hunger gained per food emoji (max 2 decimals, max 99, default 1)",
+    thirst="Thirst gained per drink emoji (max 2 decimals, max 99, default 1)",
+    happiness="Happiness gained per entertainment emoji (max 2 decimals, max 99, default 1)",
+)
+@app_commands.default_permissions(administrator=True)
+async def set_tamagochi_fill_rate(
+    interaction: discord.Interaction,
+    food: float,
+    thirst: float,
+    happiness: float,
+):
+    for name, val in [("food", food), ("thirst", thirst), ("happiness", happiness)]:
+        if not validate_rate(val):
+            await interaction.response.send_message(
+                f"⚠️ Invalid **{name}** rate: `{val}`. Must have at most 2 decimal places and be ≤ 99.",
+                ephemeral=True,
+            )
+            return
+    bot_config["tamagotchi_fill_food"] = food
+    bot_config["tamagotchi_fill_thirst"] = thirst
+    bot_config["tamagotchi_fill_happiness"] = happiness
+    save_config(bot_config)
+    await interaction.response.send_message(
+        f"✅ Tamagotchi fill rates set:\n"
+        f"• Hunger: **{food}**/emoji | Thirst: **{thirst}**/emoji | Happiness: **{happiness}**/emoji",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="set-tamagochi-max-consumption", description="Limit how many emoji the bot can consume per input")
+@app_commands.describe(limit="Max emoji consumed per input (0 = unlimited, default 0)")
+@app_commands.default_permissions(administrator=True)
+async def set_tamagochi_max_consumption(interaction: discord.Interaction, limit: int):
+    if limit < 0:
+        await interaction.response.send_message(
+            "⚠️ Limit must be 0 (unlimited) or a positive number.", ephemeral=True
+        )
+        return
+    bot_config["tamagotchi_max_consumption"] = limit
+    save_config(bot_config)
+    desc = "**unlimited** (no cap)" if limit == 0 else f"**{limit}** emoji per input"
+    await interaction.response.send_message(
+        f"✅ Tamagotchi max consumption set to {desc}.", ephemeral=True
+    )
+
+
+@bot.tree.command(name="show-tamagochi-stats", description="Show current Tamagotchi stats and configuration")
+@app_commands.default_permissions(administrator=True)
+async def show_tamagochi_stats(interaction: discord.Interaction):
+    from tamagotchi import _format_stat
+    enabled = bot_config.get("tamagotchi_enabled", False)
+    rules_set = bot_config.get("tamagotchi_rules_set", False)
+
+    if not rules_set:
+        await interaction.response.send_message(
+            "⚠️ Tamagotchi rules have not been configured yet. Run `/set-tamagochi-rules` first.",
+            ephemeral=True,
+        )
+        return
+
+    hunger = bot_config.get("tamagotchi_hunger", 0)
+    thirst = bot_config.get("tamagotchi_thirst", 0)
+    happiness = bot_config.get("tamagotchi_happiness", 0)
+    max_h = bot_config.get("tamagotchi_max_hunger", 10)
+    max_t = bot_config.get("tamagotchi_max_thirst", 10)
+    max_hp = bot_config.get("tamagotchi_max_happiness", 10)
+
+    food_emoji = " ".join(bot_config.get("tamagotchi_food_emoji", []))
+    drink_emoji = " ".join(bot_config.get("tamagotchi_drink_emoji", []))
+    ent_emoji = " ".join(bot_config.get("tamagotchi_entertainment_emoji", []))
+
+    dep_f = bot_config.get("tamagotchi_depletion_food", 1.0)
+    dep_t = bot_config.get("tamagotchi_depletion_thirst", 1.0)
+    dep_h = bot_config.get("tamagotchi_depletion_happiness", 1.0)
+    fill_f = bot_config.get("tamagotchi_fill_food", 1.0)
+    fill_t = bot_config.get("tamagotchi_fill_thirst", 1.0)
+    fill_h = bot_config.get("tamagotchi_fill_happiness", 1.0)
+    max_cons = bot_config.get("tamagotchi_max_consumption", 0)
+
+    state = "✅ Enabled" if enabled else "❌ Disabled"
+    cons_desc = "Unlimited" if max_cons == 0 else str(max_cons)
+
+    await interaction.response.send_message(
+        f"🐣 **Tamagotchi Status** — {state}\n\n"
+        f"**Current Stats:**\n"
+        f"• 🍔 Hunger: {_format_stat(hunger)}/{max_h}\n"
+        f"• 💧 Thirst: {_format_stat(thirst)}/{max_t}\n"
+        f"• 😊 Happiness: {_format_stat(happiness)}/{max_hp}\n\n"
+        f"**Accepted Emoji:**\n"
+        f"• Food: {food_emoji or '(none)'}\n"
+        f"• Drink: {drink_emoji or '(none)'}\n"
+        f"• Entertainment: {ent_emoji or '(none)'}\n\n"
+        f"**Rates:**\n"
+        f"• Depletion: 🍔 {dep_f}/turn | 💧 {dep_t}/turn | 😊 {dep_h}/turn\n"
+        f"• Fill: 🍔 {fill_f}/emoji | 💧 {fill_t}/emoji | 😊 {fill_h}/emoji\n"
+        f"• Max consumption: {cons_desc}",
+        ephemeral=True,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Slash commands — Custom model settings
 # ---------------------------------------------------------------------------
 
@@ -1533,6 +1780,22 @@ async def help_command(interaction: discord.Interaction):
             "`/set-heartbeat` — Configure periodic heartbeat (interval, channel, prompt)\n\n"
             "Fires on schedule regardless of activity. Separate from auto-chat "
             "(no idle timer)."
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="🐣 Tamagotchi Minigame",
+        value=(
+            "`/set-tamagochi-rules` — Set accepted food/drink/entertainment emoji + stat limits\n"
+            "`/set-tamagochi-mode` — Enable/disable Tamagotchi mode (rules must be set first)\n"
+            "`/set-tamagochi-depletion-rate` — Set how much stats decrease per inference\n"
+            "`/set-tamagochi-fill-rate` — Set how much stats increase per emoji consumed\n"
+            "`/set-tamagochi-max-consumption` — Limit emoji consumed per input (0 = unlimited)\n"
+            "`/show-tamagochi-stats` — View current stats, emoji, and rates\n\n"
+            "Stats deplete on every bot inference. Users feed the bot by including "
+            "accepted emoji in their messages. A stats footer is appended to every "
+            "visible response."
         ),
         inline=False,
     )

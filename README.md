@@ -194,6 +194,27 @@ The bot manages its own reminders via XML-style output tags. Instruct it to outp
 |---|---|
 | `/set-heartbeat` | Configure and enable a periodic heartbeat (fires unconditionally on an interval) |
 
+### 🐣 Tamagotchi Minigame
+
+| Command | Description |
+|---|---|
+| `/set-tamagochi-rules` | Set accepted food, drink, and entertainment emoji + maximum stat values |
+| `/set-tamagochi-mode` | Enable or disable Tamagotchi mode (rules must be configured first) |
+| `/set-tamagochi-depletion-rate` | Set how much hunger/thirst/happiness decrease per bot inference |
+| `/set-tamagochi-fill-rate` | Set how much stats increase per accepted emoji consumed (default: 1) |
+| `/set-tamagochi-max-consumption` | Limit how many emoji the bot can consume from a single input (0 = unlimited) |
+| `/show-tamagochi-stats` | Display current stats, accepted emoji, depletion/fill rates, and max consumption |
+
+**How it works:**
+
+1. **Configure rules** with `/set-tamagochi-rules` — pick which emoji count as food 🍔, drink 💧, and entertainment 🎮, plus the maximum value for each stat.
+2. **Enable the mode** with `/set-tamagochi-mode true`.
+3. **Stats deplete** each time the bot generates a response (any path — mentions, heartbeat, auto-chat, reminders, revival).
+4. **Users feed the bot** by including accepted emoji in their messages. Only *user* input is scanned — the bot cannot feed itself.
+5. **A stats footer** (e.g. `-# 🍔 5/10 | 💧 3.5/10 | 😊 7/10`) is appended to every visible bot response. If the bot only produces thoughts/commands with no chat-visible text, the footer is silently skipped.
+6. **Depletion and fill rates** must have at most 2 decimal places and be ≤ 99. Fill rates default to 1 (one emoji = +1 stat point).
+7. The bot's **system prompt** includes current Tamagotchi status so the LLM is aware of its condition, but all stat changes are handled by the script — the LLM cannot cheat.
+
 ---
 
 ## Model Modes
