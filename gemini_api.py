@@ -141,6 +141,22 @@ def _extract_text(data: dict) -> str | None:
     return None
 
 
+def _requires_search(prompt: str) -> bool:
+    """Heuristic to decide if we should attach the web search tool, saving quota."""
+    if not prompt:
+        return False
+    p = prompt.lower()
+    triggers = [
+        "search", "google", "look up", "lookup", "find out", "browse",
+        "latest", "news", "current", "today", "weather",
+        "who won", "price of", "how much is", "what time is"
+    ]
+    for t in triggers:
+        if t in p:
+            return True
+    return False
+
+
 # ── main entry point ──────────────────────────────────────────────────────────
 
 async def generate(
@@ -234,7 +250,7 @@ async def generate(
         },
     }
 
-    if config.get("multimodal_enabled", False):
+    if config.get("multimodal_enabled", False) and _requires_search(prompt):
         text_body["tools"] = [{
             "googleSearchRetrieval": {
                 "dynamicRetrievalConfig": {
