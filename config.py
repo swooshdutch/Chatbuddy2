@@ -61,6 +61,14 @@ DEFAULTS = {
     "reminders_enabled": False,
     "reminders_channel_id": None,
     "reminder_log_channel_id": None,
+    # Bot-to-bot response
+    "respond_to_bot": False,
+    "respond_bot_limit": 3,        # 1-9: stop if last N messages are all bots
+    # Heartbeat
+    "heartbeat_enabled": False,
+    "heartbeat_interval_minutes": 60,
+    "heartbeat_channel_id": None,
+    "heartbeat_prompt": "",
 }
 
 

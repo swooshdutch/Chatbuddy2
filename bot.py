@@ -6,7 +6,9 @@ import os
 import io
 import re
 import json
+import asyncio
 import threading
+from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import discord
 from discord import app_commands
@@ -19,6 +21,7 @@ from utils import strip_mention, chunk_message, format_context, resolve_custom_e
 from revival import RevivalManager
 from auto_chat import AutoChatManager
 from reminders import ReminderManager
+from heartbeat import HeartbeatManager
 
 # ---------------------------------------------------------------------------
 # Environment
@@ -47,6 +50,12 @@ bot_config: dict = {}
 revival_manager: RevivalManager | None = None
 auto_chat_manager: AutoChatManager | None = None
 reminder_manager: ReminderManager | None = None
+heartbeat_manager: HeartbeatManager | None = None
+
+# Message batching: tracks which channels are mid-generation and queues
+# incoming mentions/replies so they can be processed as a single batch.
+_generating_channels: set[int] = set()          # channel IDs currently generating
+_pending_messages: dict[int, list] = defaultdict(list)  # channel_id -> [Message, ...]
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -109,7 +118,7 @@ async def _handle_soc_extraction(response_text: str, bot_ref, config: dict) -> s
 
 @bot.event
 async def on_ready():
-    global bot_config, revival_manager, auto_chat_manager, reminder_manager
+    global bot_config, revival_manager, auto_chat_manager, reminder_manager, heartbeat_manager
     bot_config = load_config()
 
     revival_manager = RevivalManager(bot, bot_config)
@@ -120,6 +129,9 @@ async def on_ready():
 
     reminder_manager = ReminderManager(bot, bot_config)
     reminder_manager.start()
+
+    heartbeat_manager = HeartbeatManager(bot, bot_config)
+    heartbeat_manager.start()
 
     try:
         synced = await bot.tree.sync()
@@ -169,15 +181,56 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
 
+    # ── Bot-to-bot response gate (only for mention/reply) ──────────
+    if message.author.bot:
+        if not bot_config.get("respond_to_bot", False):
+            return  # responding to bots is disabled
+        # Check consecutive bot message limit
+        limit = bot_config.get("respond_bot_limit", 3)
+        limit = max(1, min(9, limit))
+        recent_msgs: list[discord.Message] = []
+        async for msg in message.channel.history(limit=limit):
+            recent_msgs.append(msg)
+        # If ALL of the last N messages are from bots/apps, stop
+        if recent_msgs and all(m.author.bot for m in recent_msgs):
+            return
+
     # If it is mentioned, also make sure we process commands in case it's a command too
     await bot.process_commands(message)
 
+    # ── Message batching: queue if already generating ──────────────
+    ch_id = message.channel.id
+    if ch_id in _generating_channels:
+        # Another generation is in progress — queue this message
+        _pending_messages[ch_id].append(message)
+        return
+
+    # Mark this channel as generating
+    _generating_channels.add(ch_id)
+    try:
+        await _generate_and_respond(message)
+
+        # Process any messages that queued up during generation
+        while _pending_messages[ch_id]:
+            batch = _pending_messages[ch_id].copy()
+            _pending_messages[ch_id].clear()
+            await _generate_batched_response(message.channel, batch)
+    finally:
+        _generating_channels.discard(ch_id)
+        _pending_messages.pop(ch_id, None)
+
+
+# ---------------------------------------------------------------------------
+# Core response helpers (extracted from on_message)
+# ---------------------------------------------------------------------------
+
+async def _generate_and_respond(message: discord.Message):
+    """Handle a single mention/reply — the normal response flow."""
     async with message.channel.typing():
         user_text = strip_mention(message.content, bot.user.id)
         if not user_text:
             user_text = "(empty message)"
 
-        # ── Normal response flow ────────────────────────────────────────
         history_limit = bot_config.get("chat_history_limit", 30)
         history_messages = []
         async for msg in message.channel.history(limit=history_limit, before=message):
@@ -185,6 +238,7 @@ async def on_message(message: discord.Message):
         history_messages.reverse()
 
         ce_channels = bot_config.get("ce_channels", {})
+        channel_key = str(message.channel.id)
         ce_enabled = ce_channels.get(channel_key, True)
         context = format_context(history_messages, ce_enabled=ce_enabled)
 
@@ -229,7 +283,72 @@ async def on_message(message: discord.Message):
                 if soul_ch:
                     joined_logs = "\n".join(soul_logs)
                     for log_chunk in chunk_message(joined_logs, limit=1900):
-                        # Ensure we don't break code blocks if sending chunks
+                        await soul_ch.send(f"**🧠 Soul Updates:**\n{log_chunk}")
+
+
+async def _generate_batched_response(channel: discord.TextChannel, batch: list[discord.Message]):
+    """
+    Process a batch of messages that arrived during generation.
+    Formats them as a single chatlog input and generates one response.
+    """
+    async with channel.typing():
+        # Build the batched input showing who said what
+        batch_lines = []
+        for msg in batch:
+            user_text = strip_mention(msg.content, bot.user.id)
+            if not user_text:
+                user_text = "(empty message)"
+            batch_lines.append(f"[{msg.author.display_name}]: {user_text}")
+        batched_input = (
+            "[MULTIPLE MESSAGES RECEIVED — respond to all of them naturally]\n"
+            + "\n".join(batch_lines)
+        )
+
+        history_limit = bot_config.get("chat_history_limit", 30)
+        history_messages = []
+        async for msg in channel.history(limit=history_limit):
+            history_messages.append(msg)
+        history_messages.reverse()
+
+        ce_channels = bot_config.get("ce_channels", {})
+        channel_key = str(channel.id)
+        ce_enabled = ce_channels.get(channel_key, True)
+        context = format_context(history_messages, ce_enabled=ce_enabled)
+
+        context += await _read_soc_context(bot, bot_config)
+
+        # Use the last message's author info for speaker metadata
+        last_msg = batch[-1]
+        response_text, audio_bytes, soul_logs, reminder_cmds = await generate(
+            batched_input, context, bot_config,
+            speaker_name=last_msg.author.display_name,
+            speaker_id=str(last_msg.author.id),
+        )
+
+        if reminder_cmds and reminder_manager:
+            await reminder_manager._apply_commands(reminder_cmds, source_channel_id=str(channel.id))
+
+        response_text = await _handle_soc_extraction(response_text, bot, bot_config)
+        response_text = resolve_custom_emoji(response_text, channel.guild)
+
+        if audio_bytes:
+            audio_file = discord.File(fp=io.BytesIO(audio_bytes), filename="chatbuddy_voice.wav")
+            await channel.send(file=audio_file)
+            chunks = chunk_message(response_text)
+            for chunk in chunks:
+                await channel.send(chunk)
+        else:
+            chunks = chunk_message(response_text)
+            for chunk in chunks:
+                await channel.send(chunk)
+
+        if soul_logs and bot_config.get("soul_channel_enabled"):
+            ch_id = bot_config.get("soul_channel_id")
+            if ch_id:
+                soul_ch = bot.get_channel(int(ch_id))
+                if soul_ch:
+                    joined_logs = "\n".join(soul_logs)
+                    for log_chunk in chunk_message(joined_logs, limit=1900):
                         await soul_ch.send(f"**🧠 Soul Updates:**\n{log_chunk}")
 
 
@@ -914,6 +1033,79 @@ async def set_reminder_log_channel(interaction: discord.Interaction, channel: di
 
 
 # ---------------------------------------------------------------------------
+# Slash commands — Bot-to-bot response control
+# ---------------------------------------------------------------------------
+
+@bot.tree.command(name="set-respond-to-bot", description="Enable or disable responding to other bots")
+@app_commands.describe(enabled="True to respond to bots, False to ignore them")
+@app_commands.default_permissions(administrator=True)
+async def set_respond_to_bot(interaction: discord.Interaction, enabled: bool):
+    bot_config["respond_to_bot"] = enabled
+    save_config(bot_config)
+    state = "enabled" if enabled else "disabled"
+    await interaction.response.send_message(
+        f"✅ Responding to other bots is now **{state}**.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="set-respond-bot-limit", description="Set how many consecutive bot messages before stopping replies (1-9)")
+@app_commands.describe(limit="Threshold: stop if the last N messages are all from bots/apps (1-9)")
+@app_commands.default_permissions(administrator=True)
+async def set_respond_bot_limit(interaction: discord.Interaction, limit: int):
+    if limit < 1 or limit > 9:
+        await interaction.response.send_message(
+            "❌ Limit must be between 1 and 9.", ephemeral=True
+        )
+        return
+    bot_config["respond_bot_limit"] = limit
+    save_config(bot_config)
+    await interaction.response.send_message(
+        f"✅ Bot-to-bot reply limit set to **{limit}** consecutive bot messages.",
+        ephemeral=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Slash commands — Heartbeat
+# ---------------------------------------------------------------------------
+
+@bot.tree.command(name="set-heartbeat", description="Configure periodic heartbeat messages")
+@app_commands.describe(
+    enabled="True to enable, False to disable",
+    interval="Interval in minutes between heartbeats",
+    channel="Channel to post heartbeat messages in",
+    prompt="The input prompt the bot receives each heartbeat",
+)
+@app_commands.default_permissions(administrator=True)
+async def set_heartbeat_cmd(
+    interaction: discord.Interaction,
+    enabled: bool,
+    interval: int,
+    channel: discord.TextChannel,
+    prompt: str,
+):
+    bot_config["heartbeat_enabled"] = enabled
+    bot_config["heartbeat_interval_minutes"] = max(1, interval)
+    bot_config["heartbeat_channel_id"] = str(channel.id)
+    bot_config["heartbeat_prompt"] = prompt
+    save_config(bot_config)
+
+    # Restart the heartbeat manager with new settings
+    global heartbeat_manager
+    if heartbeat_manager:
+        heartbeat_manager.stop()
+    heartbeat_manager = HeartbeatManager(bot, bot_config)
+    heartbeat_manager.start()
+
+    state = "enabled" if enabled else "disabled"
+    await interaction.response.send_message(
+        f"✅ Heartbeat **{state}** — every **{max(1, interval)}min** in {channel.mention}.",
+        ephemeral=True,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Slash commands — Custom model settings
 # ---------------------------------------------------------------------------
 
@@ -1127,6 +1319,27 @@ async def help_command(interaction: discord.Interaction):
             "The bot can also self-manage via hidden tags:\n"
             "`<!add-reminder>`, `<!delete-reminder>`\n"
             "`<!add-auto-wake-time>`, `<!delete-auto-wake-time>`"
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="🤖 Bot-to-Bot Response",
+        value=(
+            "`/set-respond-to-bot` — Enable/disable replying to other bots\n"
+            "`/set-respond-bot-limit` — Stop after N consecutive bot messages (1-9)\n\n"
+            "Only affects direct mention/reply. Reminders, auto-chat, revival, "
+            "and heartbeat are **not** affected."
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="💓 Heartbeat",
+        value=(
+            "`/set-heartbeat` — Configure periodic heartbeat (interval, channel, prompt)\n\n"
+            "Fires on schedule regardless of activity. Separate from auto-chat "
+            "(no idle timer)."
         ),
         inline=False,
     )
