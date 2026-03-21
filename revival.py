@@ -139,8 +139,11 @@ class RevivalManager:
 
         # Tamagotchi: deplete stats after inference (no emoji consumption — bot-initiated)
         if self.config.get("tamagotchi_enabled", False):
-            from tamagotchi import deplete_stats
-            deplete_stats(self.config)
+            from tamagotchi import deplete_stats, broadcast_death
+            death_msg = deplete_stats(self.config)
+            if death_msg:
+                response_text = (response_text + "\n\n" + death_msg) if response_text else death_msg
+                await broadcast_death(self.bot, self.config)
 
         # Apply reminder commands the bot may have emitted
         if reminder_cmds:
@@ -294,8 +297,11 @@ class RevivalManager:
 
                 # Tamagotchi: deplete stats after inference (no emoji consumption — bot-initiated)
                 if self.config.get("tamagotchi_enabled", False):
-                    from tamagotchi import deplete_stats
-                    deplete_stats(self.config)
+                    from tamagotchi import deplete_stats, broadcast_death
+                    death_msg = deplete_stats(self.config)
+                    if death_msg:
+                        response_text = (response_text + "\n\n" + death_msg) if response_text else death_msg
+                        await broadcast_death(self.bot, self.config)
 
                 # Apply reminder commands the bot may have emitted
                 if reminder_cmds:

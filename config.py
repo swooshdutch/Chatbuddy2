@@ -96,6 +96,20 @@ DEFAULTS = {
     "tamagotchi_fill_thirst": 1.0,
     "tamagotchi_fill_happiness": 1.0,
     "tamagotchi_max_consumption": 0,
+    # Tamagotchi hardcore mode
+    "tamagotchi_hardcore_enabled": False,
+    "tamagotchi_hardcore_rules_set": False,
+    "tamagotchi_sickness": 0.0,
+    "tamagotchi_max_sickness": 10,
+    "tamagotchi_medicine_emoji": [],
+    "tamagotchi_medicine_heal": 1.0,
+    "tamagotchi_sickness_threshold_food": 2.0,
+    "tamagotchi_sickness_threshold_thirst": 2.0,
+    "tamagotchi_sickness_threshold_happiness": 2.0,
+    "tamagotchi_sickness_increase_food": 1.0,
+    "tamagotchi_sickness_increase_thirst": 1.0,
+    "tamagotchi_sickness_increase_happiness": 1.0,
+    "tamagotchi_rip_message": "",
 }
 
 

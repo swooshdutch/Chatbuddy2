@@ -77,6 +77,7 @@ Mention the bot (`@ChatBuddy`) or reply to one of its messages. That's it!
 | `/set-api-key` | Set the Gemini API key |
 | `/set-api-context` | Enable internal daily LLM API quota tracking / logic in system prompt |
 | `/check-api-quota` | Check the current tracked daily quota visually |
+| `/set-edit-api-current-quota` | Manually correct the current API usage counter (cannot exceed max limit) |
 | `/set-chat-history` | Set how many messages of context the bot receives (default: 30) |
 | `/set-temp` | Set model temperature (0.0 – 2.0) |
 | `/set-api-endpoint-gemini` | Set the Gemini model endpoint |
@@ -214,6 +215,27 @@ The bot manages its own reminders via XML-style output tags. Instruct it to outp
 5. **A stats footer** (e.g. `-# 🍔 5/10 | 💧 3.5/10 | 😊 7/10`) is appended to every visible bot response. If the bot only produces thoughts/commands with no chat-visible text, the footer is silently skipped.
 6. **Depletion and fill rates** must have at most 2 decimal places and be ≤ 99. Fill rates default to 1 (one emoji = +1 stat point).
 7. The bot's **system prompt** includes current Tamagotchi status so the LLM is aware of its condition, but all stat changes are handled by the script — the LLM cannot cheat.
+
+### 💀 Tamagotchi Hardcore Mode
+
+| Command | Description |
+|---|---|
+| `/set-hardcore-sickness-stat` | Set the max sickness value (death threshold, max 2 decimals, ≤ 99) |
+| `/set-hardcore-tamagochi-medicine` | Set medicine emoji and heal amount per emoji |
+| `/set-hardcore-tamagochi-sickness-thresh-hold` | Set stat thresholds below which sickness increases |
+| `/set-hardcore-tamagochi-sickness-increase` | Set how much sickness increases per turn per stat below threshold |
+| `/set-tamagochi-rip-message` | Set a custom death message (leave empty to use the default) |
+| `/set-hardcore-tamagochi-mode` | Enable/disable hardcore mode (all settings above must be configured first) |
+
+**How it works:**
+
+1. **Configure all settings** — max sickness, medicine emoji, thresholds, and sickness increase rates.
+2. **Enable hardcore** with `/set-hardcore-tamagochi-mode true` (refuses if anything is missing, and tells you what).
+3. **Sickness increases** each turn for every stat that is below its threshold. Multiple stats below threshold stack.
+4. **Medicine emoji** in user messages **decrease sickness** by the configured heal amount.
+5. **Death** — when sickness reaches max: the soul file (`soul.md`) is wiped clean, all stats reset to max, sickness resets to 0, `[ce]` is sent to **all allowed channels and the SoC channel** (wiping all context), and the death message is posted in chat.
+6. **Custom death message** — use `/set-tamagochi-rip-message` to set a custom message. Leave empty to use the default.
+7. **Disabling** hardcore mode resets sickness to 0 and removes sickness from the footer.
 
 ---
 
