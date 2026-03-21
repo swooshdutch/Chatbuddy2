@@ -256,6 +256,7 @@ async def generate(
                 data   = await resp.json()
 
         if status == 429:
+            print(f"[ChatBuddy] Text API error 429 (Rate Limit): {data}")
             return MSG_RATE_LIMIT, None, [], []
 
         if status != 200:
@@ -282,6 +283,8 @@ async def generate(
         print(f"[ChatBuddy] HTTP error during text inference: {e}")
         return MSG_GENERIC_ERROR, None, [], []
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"[ChatBuddy] Unexpected error during text inference: {e}")
         return MSG_GENERIC_ERROR, None, [], []
 
