@@ -231,6 +231,18 @@ async def _generate_and_respond(message: discord.Message):
         if not user_text:
             user_text = "(empty message)"
 
+        import re
+        if bot_config.get("duck_search_enabled", False):
+            if "!search" in user_text.lower():
+                parts = re.split(r"!search", user_text, flags=re.IGNORECASE, maxsplit=1)
+                query = parts[1].strip() if len(parts) > 1 else ""
+                if not query:
+                    query = user_text.strip()
+                from duck_search import get_duckduckgo_context
+                import asyncio
+                search_ctx = await asyncio.to_thread(get_duckduckgo_context, query)
+                user_text = f"{search_ctx}\n\nUser Question/Message: {user_text}"
+
         history_limit = bot_config.get("chat_history_limit", 30)
         history_messages = []
         async for msg in message.channel.history(limit=history_limit, before=message):
@@ -258,6 +270,31 @@ async def _generate_and_respond(message: discord.Message):
             speaker_id=str(message.author.id),
             attachments=attachments_data,
         )
+
+        # AI-triggered 2-stage turn for Web Search
+        import re
+        if bot_config.get("duck_search_enabled", False):
+            search_match = re.search(r"<!search:\s*(.+?)>", response_text)
+            if search_match:
+                query = search_match.group(1).strip()
+                from duck_search import get_duckduckgo_context
+                import asyncio
+                search_ctx = await asyncio.to_thread(get_duckduckgo_context, query)
+                
+                second_input = (
+                    f"{response_text}\n\n"
+                    f"[Search Results for '{query}']:\n{search_ctx}\n\n"
+                    f"Please review the search results above and generate your final user-facing answer. Dodge all <!search:> tags now."
+                )
+                
+                response_text, audio_bytes, soul_logs2, reminder_cmds2 = await generate(
+                    second_input, context, bot_config,
+                    speaker_name=message.author.display_name,
+                    speaker_id=str(message.author.id),
+                    attachments=None,  # Do not resend attachments on the invisible turn
+                )
+                if soul_logs2: soul_logs.extend(soul_logs2)
+                if reminder_cmds2: reminder_cmds.extend(reminder_cmds2)
 
         # Apply any reminder/wake-time commands the bot emitted
         if reminder_cmds and reminder_manager:
@@ -312,6 +349,18 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
             + "\n".join(batch_lines)
         )
 
+        import re
+        if bot_config.get("duck_search_enabled", False):
+            if "!search" in batched_input.lower():
+                parts = re.split(r"!search", batched_input, flags=re.IGNORECASE, maxsplit=1)
+                query = parts[1].strip() if len(parts) > 1 else ""
+                if not query:
+                    query = batched_input.strip()
+                from duck_search import get_duckduckgo_context
+                import asyncio
+                search_ctx = await asyncio.to_thread(get_duckduckgo_context, query)
+                batched_input = f"{search_ctx}\n\nUser Question/Message: {batched_input}"
+
         history_limit = bot_config.get("chat_history_limit", 30)
         history_messages = []
         async for msg in channel.history(limit=history_limit):
@@ -341,6 +390,31 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
             speaker_id=str(last_msg.author.id),
             attachments=attachments_data,
         )
+
+        # AI-triggered 2-stage turn for Web Search
+        import re
+        if bot_config.get("duck_search_enabled", False):
+            search_match = re.search(r"<!search:\s*(.+?)>", response_text)
+            if search_match:
+                query = search_match.group(1).strip()
+                from duck_search import get_duckduckgo_context
+                import asyncio
+                search_ctx = await asyncio.to_thread(get_duckduckgo_context, query)
+                
+                second_input = (
+                    f"{response_text}\n\n"
+                    f"[Search Results for '{query}']:\n{search_ctx}\n\n"
+                    f"Please review the search results above and generate your final user-facing answer. Dodge all <!search:> tags now."
+                )
+                
+                response_text, audio_bytes, soul_logs2, reminder_cmds2 = await generate(
+                    second_input, context, bot_config,
+                    speaker_name=last_msg.author.display_name,
+                    speaker_id=str(last_msg.author.id),
+                    attachments=None,  # Do not resend attachments on the invisible turn
+                )
+                if soul_logs2: soul_logs.extend(soul_logs2)
+                if reminder_cmds2: reminder_cmds.extend(reminder_cmds2)
 
         if reminder_cmds and reminder_manager:
             await reminder_manager._apply_commands(reminder_cmds, source_channel_id=str(channel.id))
@@ -400,6 +474,16 @@ async def set_gemini_web_search(interaction: discord.Interaction, enabled: bool)
     save_config(bot_config)
     state = "**enabled** 🌍" if enabled else "**disabled** 🚫"
     await interaction.response.send_message(f"✅ Web search capabilities {state}.", ephemeral=True)
+
+
+@bot.tree.command(name="set-duck-search", description="Enable or disable DuckDuckGo Web Search")
+@app_commands.describe(enabled="True = bot can search the web for free. False = disabled (default)")
+@app_commands.default_permissions(administrator=True)
+async def set_duck_search(interaction: discord.Interaction, enabled: bool):
+    bot_config["duck_search_enabled"] = enabled
+    save_config(bot_config)
+    state = "**enabled** 🦆" if enabled else "**disabled** 🚫"
+    await interaction.response.send_message(f"✅ DuckDuckGo Web Search {state}.", ephemeral=True)
 
 
 @bot.tree.command(name="set-chat-history", description="Set how many messages of context the bot receives")
@@ -1262,8 +1346,9 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(
         name="⚙️ Core Settings",
         value=(
-            "`/set-api-key` — Set the Gemini API key\n"
-            "`/set-chat-history` — Set context message count (default: 30)\n"
+            "`/set-gemini-web-search [true/false]` : Enable internal Gemini Search.\n"
+            "`/set-duck-search [true/false]` : Enable free Python DuckDuckGo Search capabilities.\n"
+            "`/set-chat-history [limit]` : Set the maximum messages to remember (default 30).\n"
             "`/set-temp` — Set model temperature (0.0 – 2.0)\n"
             "`/set-api-endpoint-gemini` — Set the Gemini model endpoint\n"
             "`/set-api-endpoint-gemma` — Set the Gemma model endpoint\n"

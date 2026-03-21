@@ -323,6 +323,11 @@ async def generate(
         # If the response was ONLY thoughts, no need to synthesize empty audio
         return text_reply, None, soul_logs, reminder_cmds
 
+    import re
+    if re.search(r"<!search:\s*(.+?)>", text_reply):
+        # Dodge audio endpoint for intermediate search turn
+        return text_reply, None, soul_logs, reminder_cmds
+
     wav_bytes = await generate_tts(api_key, tts_endpoint, voice, tts_text)
 
     if wav_bytes is None:
