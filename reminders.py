@@ -356,12 +356,13 @@ class ReminderManager:
             )
 
             # Tamagotchi: deplete stats after inference (no emoji consumption — bot-initiated)
+            is_dead = False
             if self.config.get("tamagotchi_enabled", False):
                 from tamagotchi import deplete_stats, broadcast_death
                 death_msg = deplete_stats(self.config)
                 if death_msg:
                     response_text = (response_text + "\n\n" + death_msg) if response_text else death_msg
-                    await broadcast_death(self.bot, self.config)
+                    is_dead = True
 
             # Process reminder/wake-time tags the bot may have included
             response_text, new_cmds = extract_reminder_commands(response_text)
@@ -412,6 +413,9 @@ class ReminderManager:
                         joined_logs = "\n".join(soul_logs)
                         for log_chunk in chunk_message(joined_logs, limit=1900):
                             await soul_ch.send(f"**🧠 Soul Updates:**\n{log_chunk}")
+
+            if is_dead:
+                await broadcast_death(self.bot, self.config)
 
             # Log the firing
             await self._log(f"🔔 **Fired {kind}** `{entry_name}` in {channel.mention}")

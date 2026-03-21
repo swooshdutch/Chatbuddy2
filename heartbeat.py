@@ -129,7 +129,7 @@ class HeartbeatManager:
                 death_msg = deplete_stats(self.config)
                 if death_msg:
                     response_text = (response_text + "\n\n" + death_msg) if response_text else death_msg
-                    await broadcast_death(self.bot, self.config)
+                    is_dead = True
 
             # Process reminder tags
             response_text, new_cmds = extract_reminder_commands(response_text)
@@ -180,6 +180,8 @@ class HeartbeatManager:
                         for log_chunk in chunk_message(joined_logs, limit=1900):
                             await soul_ch.send(f"**🧠 Soul Updates:**\n{log_chunk}")
 
+            if is_dead:
+                await broadcast_death(self.bot, self.config)
             print(f"[Heartbeat] Fired at {datetime.now().strftime('%H:%M:%S')}.")
 
         except Exception as e:

@@ -277,9 +277,10 @@ async def _generate_and_respond(message: discord.Message):
 
         # Tamagotchi: deplete stats after generate
         death_msg = deplete_stats(bot_config)
+        is_dead = False
         if death_msg:
             response_text = (response_text + "\n\n" + death_msg) if response_text else death_msg
-            await broadcast_death(bot, bot_config)
+            is_dead = True
 
         # AI-triggered 2-stage turn for Web Search
         import re
@@ -307,7 +308,7 @@ async def _generate_and_respond(message: discord.Message):
                 death_msg2 = deplete_stats(bot_config)
                 if death_msg2:
                     response_text = (response_text + "\n\n" + death_msg2) if response_text else death_msg2
-                    await broadcast_death(bot, bot_config)
+                    is_dead = True
                 if soul_logs2: soul_logs.extend(soul_logs2)
                 if reminder_cmds2: reminder_cmds.extend(reminder_cmds2)
 
@@ -349,6 +350,9 @@ async def _generate_and_respond(message: discord.Message):
                     joined_logs = "\n".join(soul_logs)
                     for log_chunk in chunk_message(joined_logs, limit=1900):
                         await soul_ch.send(f"**🧠 Soul Updates:**\n{log_chunk}")
+
+        if is_dead:
+            await broadcast_death(bot, bot_config)
 
 
 async def _generate_batched_response(channel: discord.TextChannel, batch: list[discord.Message]):
@@ -417,9 +421,10 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
 
         # Tamagotchi: deplete stats after generate
         death_msg = deplete_stats(bot_config)
+        is_dead = False
         if death_msg:
             response_text = (response_text + "\n\n" + death_msg) if response_text else death_msg
-            await broadcast_death(bot, bot_config)
+            is_dead = True
 
         # AI-triggered 2-stage turn for Web Search
         import re
@@ -447,7 +452,7 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
                 death_msg2 = deplete_stats(bot_config)
                 if death_msg2:
                     response_text = (response_text + "\n\n" + death_msg2) if response_text else death_msg2
-                    await broadcast_death(bot, bot_config)
+                    is_dead = True
                 if soul_logs2: soul_logs.extend(soul_logs2)
                 if reminder_cmds2: reminder_cmds.extend(reminder_cmds2)
 
@@ -481,6 +486,9 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
                     joined_logs = "\n".join(soul_logs)
                     for log_chunk in chunk_message(joined_logs, limit=1900):
                         await soul_ch.send(f"**🧠 Soul Updates:**\n{log_chunk}")
+
+        if is_dead:
+            await broadcast_death(bot, bot_config)
 
 
 # ---------------------------------------------------------------------------
