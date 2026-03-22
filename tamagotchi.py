@@ -879,7 +879,7 @@ class RPSView(ui.View):
 
         self.stop()
 
-    @ui.button(label=":rock:", style=discord.ButtonStyle.primary, row=0)
+    @ui.button(label="Rock", emoji="🪨", style=discord.ButtonStyle.primary, row=0)
     async def rock_btn(self, interaction: discord.Interaction, button: ui.Button):
         await self._play(interaction, "rock")
 
