@@ -100,6 +100,7 @@ DEFAULTS = {
     "tama_satiation": 0.0,
     "tama_satiation_max": 10,
     "tama_satiation_timer": 300,
+    "tama_satiation_timer_decrease": 1.0,
     "tama_satiation_food_increase": 1.0,
     "tama_satiation_drink_increase": 1.0,
     "tama_satiation_depletion": 0.2,
@@ -148,6 +149,9 @@ DEFAULTS = {
     "tama_resp_sleeping": "I am sleeping come back in {time}",
     "tama_resp_no_energy": "⚡ I'm out of energy and need a rest first!",
     "tama_rip_message": "",
+    # Command access
+    "bot_owner_id": "",
+    "command_allowed_user_ids": [],
 }
 
 

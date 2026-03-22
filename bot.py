@@ -33,6 +33,14 @@ from tamagotchi import (
 # ---------------------------------------------------------------------------
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
+SETUP_API_KEY = os.getenv("API_KEY", "")
+SETUP_GEMINI_ENDPOINT = os.getenv("GEMINI_ENDPOINT", "")
+SETUP_AUDIO_ENDPOINT = os.getenv("AUDIO_ENDPOINT", "")
+SETUP_MAIN_CHAT_CHANNEL = os.getenv("MAIN_CHAT_CHANNEL", "")
+SETUP_THOUGHTS_CHANNEL = os.getenv("THOUGHTS_CHANNEL", "")
+SETUP_SOUL_CHANNEL = os.getenv("SOUL_CHANNEL", "")
+SETUP_SYS_INSTRUCT = os.getenv("SYS_INSTRUCT", "")
+SETUP_BOT_OWNER_ID = os.getenv("BOT_OWNER_ID", "")
 
 if not TOKEN:
     raise RuntimeError(
@@ -124,6 +132,42 @@ def _build_tama_view():
         return TamagotchiView(bot_config, tama_manager)
     return None
 
+
+def _configured_owner_id() -> str:
+    return str(bot_config.get("bot_owner_id") or SETUP_BOT_OWNER_ID or "").strip()
+
+
+def _allowed_command_ids() -> set[str]:
+    ids = {str(x).strip() for x in bot_config.get("command_allowed_user_ids", []) if str(x).strip()}
+    owner_id = _configured_owner_id()
+    if owner_id:
+        ids.add(owner_id)
+    return ids
+
+
+def _is_allowed_command_user(user_id: int | str) -> bool:
+    return str(user_id) in _allowed_command_ids()
+
+
+def _is_owner_user(user_id: int | str) -> bool:
+    owner_id = _configured_owner_id()
+    return bool(owner_id) and str(user_id) == owner_id
+
+
+async def _deny_command(interaction: discord.Interaction) -> None:
+    if interaction.response.is_done():
+        await interaction.followup.send("You are not allowed to use bot setup commands.", ephemeral=True)
+    else:
+        await interaction.response.send_message("You are not allowed to use bot setup commands.", ephemeral=True)
+
+
+@bot.tree.check
+async def _command_access_check(interaction: discord.Interaction) -> bool:
+    if _is_allowed_command_user(interaction.user.id):
+        return True
+    await _deny_command(interaction)
+    return False
+
 # ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
@@ -132,6 +176,9 @@ def _build_tama_view():
 async def on_ready():
     global bot_config, revival_manager, auto_chat_manager, reminder_manager, heartbeat_manager, tama_manager
     bot_config = load_config()
+    if not bot_config.get("bot_owner_id") and SETUP_BOT_OWNER_ID:
+        bot_config["bot_owner_id"] = SETUP_BOT_OWNER_ID
+        save_config(bot_config)
 
     revival_manager = RevivalManager(bot, bot_config)
     revival_manager.start()
@@ -155,10 +202,26 @@ async def on_ready():
     except Exception as e:
         print(f"[ChatBuddy] Failed to sync commands: {e}")
 
+
+def _restart_background_managers():
+    if revival_manager:
+        revival_manager.start()
+    if auto_chat_manager:
+        auto_chat_manager.start()
+    if reminder_manager:
+        reminder_manager.start()
+    if heartbeat_manager:
+        heartbeat_manager.start()
+    if tama_manager:
+        tama_manager.start()
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def purgecommands(ctx):
     """Nuke all guild-specific slash commands and resync global ones to clear 'ghosts'."""
+    if not _is_allowed_command_user(ctx.author.id):
+        await ctx.send("You are not allowed to use bot setup commands.")
+        return
     bot.tree.clear_commands(guild=ctx.guild)
     await bot.tree.sync(guild=ctx.guild)
     await ctx.send(f"✅ Wiped old guild slash commands and refreshed the tree for {ctx.guild.name}.")
@@ -1383,6 +1446,90 @@ async def set_heartbeat_cmd(
 # ---------------------------------------------------------------------------
 
 
+@bot.tree.command(name="setup-bot", description="Populate the bot config from backend environment variables")
+async def setup_bot(interaction: discord.Interaction):
+    if not _is_owner_user(interaction.user.id):
+        await _deny_command(interaction)
+        return
+
+    missing = []
+    if not SETUP_API_KEY:
+        missing.append("API_KEY")
+    if not SETUP_GEMINI_ENDPOINT:
+        missing.append("GEMINI_ENDPOINT")
+    if not SETUP_MAIN_CHAT_CHANNEL:
+        missing.append("MAIN_CHAT_CHANNEL")
+    if not _configured_owner_id():
+        missing.append("BOT_OWNER_ID")
+
+    if missing:
+        await interaction.response.send_message(
+            f"Missing setup env vars: {', '.join(missing)}",
+            ephemeral=True,
+        )
+        return
+
+    allowed_channels = dict(bot_config.get("allowed_channels", {}))
+    allowed_channels[str(SETUP_MAIN_CHAT_CHANNEL)] = True
+    ce_channels = dict(bot_config.get("ce_channels", {}))
+    ce_channels[str(SETUP_MAIN_CHAT_CHANNEL)] = True
+
+    bot_config["api_key"] = SETUP_API_KEY
+    bot_config["model_mode"] = "gemini"
+    bot_config["model_endpoint_gemini"] = SETUP_GEMINI_ENDPOINT
+    bot_config["audio_endpoint"] = SETUP_AUDIO_ENDPOINT
+    bot_config["audio_enabled"] = bool(SETUP_AUDIO_ENDPOINT)
+    bot_config["system_prompt"] = SETUP_SYS_INSTRUCT or bot_config.get("system_prompt", "")
+    bot_config["allowed_channels"] = allowed_channels
+    bot_config["ce_channels"] = ce_channels
+    bot_config["soc_channel_id"] = str(SETUP_THOUGHTS_CHANNEL) if SETUP_THOUGHTS_CHANNEL else None
+    bot_config["soc_enabled"] = bool(SETUP_THOUGHTS_CHANNEL)
+    bot_config["soc_context_enabled"] = bool(SETUP_THOUGHTS_CHANNEL)
+    bot_config["soul_channel_id"] = str(SETUP_SOUL_CHANNEL) if SETUP_SOUL_CHANNEL else ""
+    bot_config["soul_channel_enabled"] = bool(SETUP_SOUL_CHANNEL)
+    bot_config["soul_enabled"] = True
+    bot_config["soul_limit"] = 10000
+    bot_config["heartbeat_enabled"] = False
+    bot_config["auto_chat_enabled"] = False
+    bot_config["bot_owner_id"] = _configured_owner_id()
+    bot_config["reminders_channel_id"] = str(SETUP_MAIN_CHAT_CHANNEL)
+
+    save_config(bot_config)
+    _restart_background_managers()
+
+    await interaction.response.send_message(
+        "Setup complete. Main channels, API settings, soul limit, and owner access were populated from backend variables.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="set-command-user", description="Add or remove a user ID that can use bot commands")
+@app_commands.describe(user_id="The Discord user ID to change access for", allowed="True to allow, False to remove")
+async def set_command_user(interaction: discord.Interaction, user_id: str, allowed: bool):
+    if not _is_owner_user(interaction.user.id):
+        await _deny_command(interaction)
+        return
+
+    normalized = user_id.strip()
+    if not normalized.isdigit():
+        await interaction.response.send_message("User ID must be numeric.", ephemeral=True)
+        return
+    if normalized == _configured_owner_id():
+        await interaction.response.send_message("The owner ID is always allowed and cannot be removed.", ephemeral=True)
+        return
+
+    allowed_ids = [str(x).strip() for x in bot_config.get("command_allowed_user_ids", []) if str(x).strip()]
+    if allowed and normalized not in allowed_ids:
+        allowed_ids.append(normalized)
+    if not allowed:
+        allowed_ids = [x for x in allowed_ids if x != normalized]
+
+    bot_config["command_allowed_user_ids"] = allowed_ids
+    save_config(bot_config)
+    state = "allowed" if allowed else "removed"
+    await interaction.response.send_message(f"Command access {state} for `{normalized}`.", ephemeral=True)
+
+
 @bot.tree.command(name="set-tama-mode", description="Enable or disable Tamagotchi mode")
 @app_commands.describe(enabled="True to enable, False to disable")
 @app_commands.default_permissions(administrator=True)
@@ -1481,7 +1628,8 @@ async def set_tama_health(interaction: discord.Interaction, max: int, damage_per
 @bot.tree.command(name="set-tama-satiation", description="Configure the satiation system")
 @app_commands.describe(
     max="Maximum satiation before timer starts",
-    timer="Cooldown in seconds when full (default 300 = 5min)",
+    timer="Seconds between each satiation timer tick (default 300 = 5min)",
+    timer_decrease="How much satiation the timer removes each tick",
     food_inc="Satiation gained per feed button press",
     drink_inc="Satiation gained per drink button press",
     depletion="Satiation decrease per LLM turn",
@@ -1489,7 +1637,7 @@ async def set_tama_health(interaction: discord.Interaction, max: int, damage_per
 @app_commands.default_permissions(administrator=True)
 async def set_tama_satiation(
     interaction: discord.Interaction,
-    max: int, timer: int, food_inc: float, drink_inc: float, depletion: float,
+    max: int, timer: int, timer_decrease: float, food_inc: float, drink_inc: float, depletion: float,
 ):
     if max < 1:
         await interaction.response.send_message("⚠️ Max must be at least 1.", ephemeral=True)
@@ -1499,6 +1647,7 @@ async def set_tama_satiation(
         return
     bot_config["tama_satiation_max"] = max
     bot_config["tama_satiation_timer"] = timer
+    bot_config["tama_satiation_timer_decrease"] = timer_decrease
     bot_config["tama_satiation_food_increase"] = food_inc
     bot_config["tama_satiation_drink_increase"] = drink_inc
     bot_config["tama_satiation_depletion"] = depletion

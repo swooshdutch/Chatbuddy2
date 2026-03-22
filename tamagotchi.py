@@ -91,6 +91,8 @@ class TamagotchiManager:
         """Start background tasks if tama is enabled."""
         if self.config.get("tama_enabled", False):
             self._resume_sleep_state()
+            if self.config.get("tama_satiation", 0) >= self.config.get("tama_satiation_max", 10):
+                self.start_satiation_timer()
             self._start_dirt_task()
 
     def stop(self):
@@ -171,21 +173,27 @@ class TamagotchiManager:
         return max(0.0, self._satiation_expiry - time.time())
 
     def start_satiation_timer(self):
-        duration = self.config.get("tama_satiation_timer", 300)
-        self._satiation_expiry = time.time() + duration
+        interval = max(1, int(self.config.get("tama_satiation_timer", 300)))
+        self._satiation_expiry = time.time() + interval
         if self._satiation_task and not self._satiation_task.done():
             self._satiation_task.cancel()
-        self._satiation_task = asyncio.create_task(self._satiation_countdown(duration))
+        self._satiation_task = asyncio.create_task(self._satiation_countdown())
 
-    async def _satiation_countdown(self, duration: float):
+    async def _satiation_countdown(self):
         try:
-            await asyncio.sleep(duration)
+            while self.config.get("tama_satiation", 0) >= self.config.get("tama_satiation_max", 10):
+                interval = max(1, int(self.config.get("tama_satiation_timer", 300)))
+                self._satiation_expiry = time.time() + interval
+                await asyncio.sleep(interval)
+                decrease = max(0.0, float(self.config.get("tama_satiation_timer_decrease", 1.0)))
+                self.config["tama_satiation"] = max(
+                    0.0, round(self.config.get("tama_satiation", 0) - decrease, 2)
+                )
+                save_config(self.config)
         except asyncio.CancelledError:
             return
         # Timer expired — reset satiation to 0
-        self.config["tama_satiation"] = 0.0
         self._satiation_expiry = 0.0
-        save_config(self.config)
 
     # ── poop damage background ────────────────────────────────────────────
 
@@ -383,12 +391,16 @@ async def broadcast_death(bot, config: dict) -> None:
 
 async def _broadcast_death_and_message(bot, config: dict, death_msg: str):
     """Post death message in all allowed channels, then broadcast [ce]."""
+    tama_view = None
+    tama_manager = getattr(bot, "tama_manager", None)
+    if config.get("tama_enabled", False) and tama_manager:
+        tama_view = TamagotchiView(config, tama_manager)
     for ch_id_str, enabled in config.get("allowed_channels", {}).items():
         if enabled:
             try:
                 ch = bot.get_channel(int(ch_id_str))
                 if ch:
-                    await ch.send(death_msg)
+                    await ch.send(death_msg, view=tama_view)
             except Exception:
                 pass
     await broadcast_death(bot, config)
@@ -516,7 +528,8 @@ class TamagotchiView(ui.View):
         self.add_item(PlayButton(self.config, self.manager))
         self.add_item(MedicateButton(self.config, self.manager))
         self.add_item(CleanButton(self.config, self.manager))
-        self.add_item(RestButton(self.config, self.manager))
+        if energy < 1:
+            self.add_item(RestButton(self.config, self.manager))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -593,7 +606,7 @@ class FeedButton(ui.Button):
         save_config(self.config)
         self.manager.set_cooldown("feed", self.config.get("tama_cd_feed", 60))
         msg = self.config.get("tama_resp_feed", "*nom nom* 🍔 Thanks for the food!")
-        await interaction.response.send_message(msg)
+        await interaction.response.send_message(msg, view=TamagotchiView(self.config, self.manager))
 
 
 class DrinkButton(ui.Button):
@@ -645,7 +658,7 @@ class DrinkButton(ui.Button):
         save_config(self.config)
         self.manager.set_cooldown("drink", self.config.get("tama_cd_drink", 60))
         msg = self.config.get("tama_resp_drink", "*gulp gulp* 🥤 That hit the spot!")
-        await interaction.response.send_message(msg)
+        await interaction.response.send_message(msg, view=TamagotchiView(self.config, self.manager))
 
 
 class PlayButton(ui.Button):
@@ -718,7 +731,7 @@ class MedicateButton(ui.Button):
     def __init__(self, config, manager):
         super().__init__(
             label="💉 Medicate",
-            style=discord.ButtonStyle.secondary,
+            style=discord.ButtonStyle.danger,
             custom_id="tama_medicate",
             row=2,
         )
@@ -747,7 +760,7 @@ class MedicateButton(ui.Button):
         save_config(self.config)
         self.manager.set_cooldown("medicate", self.config.get("tama_cd_medicate", 60))
         msg = self.config.get("tama_resp_medicate", "💊 Feeling better!")
-        await interaction.response.send_message(msg)
+        await interaction.response.send_message(msg, view=TamagotchiView(self.config, self.manager))
 
 
 class CleanButton(ui.Button):
@@ -783,7 +796,7 @@ class CleanButton(ui.Button):
         save_config(self.config)
         self.manager.set_cooldown("clean", self.config.get("tama_cd_clean", 60))
         msg = self.config.get("tama_resp_clean", "🚿 Squeaky clean!")
-        await interaction.response.send_message(msg)
+        await interaction.response.send_message(msg, view=TamagotchiView(self.config, self.manager))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -797,7 +810,7 @@ class RestButton(ui.Button):
     def __init__(self, config, manager):
         super().__init__(
             label="💤 Rest",
-            style=discord.ButtonStyle.danger,
+            style=discord.ButtonStyle.secondary,
             custom_id="tama_rest",
             row=3,
         )
@@ -821,7 +834,7 @@ class RestButton(ui.Button):
         self.manager.set_cooldown("rest", self.config.get("tama_cd_rest", 60))
         msg = self.config.get("tama_resp_rest", "💤 Tucking in for a recharge. See you soon!")
         msg += f"\n⏳ {_fmt_countdown(self.manager.sleep_remaining)}"
-        await interaction.response.send_message(msg)
+        await interaction.response.send_message(msg, view=TamagotchiView(self.config, self.manager))
 
 
 class RPSView(ui.View):
@@ -862,11 +875,11 @@ class RPSView(ui.View):
                 f"🎮 **Rock Paper Scissors** — {interaction.user.display_name} vs Bot\n"
                 f"{text}"
             )
-            await channel.send(public_text)
+            await channel.send(public_text, view=TamagotchiView(self.config, self.manager))
 
         self.stop()
 
-    @ui.button(label="🪨 Rock", style=discord.ButtonStyle.primary, row=0)
+    @ui.button(label=":rock:", style=discord.ButtonStyle.primary, row=0)
     async def rock_btn(self, interaction: discord.Interaction, button: ui.Button):
         await self._play(interaction, "rock")
 
