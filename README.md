@@ -195,47 +195,74 @@ The bot manages its own reminders via XML-style output tags. Instruct it to outp
 |---|---|
 | `/set-heartbeat` | Configure and enable a periodic heartbeat (fires unconditionally on an interval) |
 
-### 🐣 Tamagotchi Minigame
+### 🐣 Tamagotchi
+
+A gamified virtual pet system with Discord button interactions.
+
+#### Stat Configuration
 
 | Command | Description |
 |---|---|
-| `/set-tamagochi-rules` | Set accepted food, drink, and entertainment emoji + maximum stat values |
-| `/set-tamagochi-mode` | Enable or disable Tamagotchi mode (rules must be configured first) |
-| `/set-tamagochi-depletion-rate` | Set how much hunger/thirst/happiness decrease per bot inference |
-| `/set-tamagochi-fill-rate` | Set how much stats increase per accepted emoji consumed (default: 1) |
-| `/set-tamagochi-max-consumption` | Limit how many emoji the bot can consume from a single input (0 = unlimited) |
-| `/show-tamagochi-stats` | Display current stats, accepted emoji, depletion/fill rates, and max consumption |
+| `/set-tama-mode` | Enable or disable Tamagotchi mode |
+| `/set-tama-hunger` | Set max hunger and depletion per inference |
+| `/set-tama-thirst` | Set max thirst and depletion per inference |
+| `/set-tama-happiness` | Set max happiness and depletion per inference |
+| `/set-tama-health` | Set max health, damage per stat below threshold, and threshold |
+| `/set-tama-satiation` | Set max satiation, cooldown timer, food/drink increase, and depletion |
+| `/set-tama-energy` | Set max energy and depletion for API calls / games |
+| `/set-tama-dirt` | Set max poop, food threshold for poop, health damage, and damage interval |
+| `/set-tama-sickness` | Set health damage per turn while sick |
 
-**How it works:**
-
-1. **Configure rules** with `/set-tamagochi-rules` — pick which emoji count as food 🍔, drink 💧, and entertainment 🎮, plus the maximum value for each stat.
-2. **Enable the mode** with `/set-tamagochi-mode true`.
-3. **Stats deplete** each time the bot generates a response (any path — mentions, heartbeat, auto-chat, reminders, revival).
-4. **Users feed the bot** by including accepted emoji in their messages. Only *user* input is scanned — the bot cannot feed itself.
-5. **A stats footer** (e.g. `-# 🍔 5/10 | 💧 3.5/10 | 😊 7/10`) is appended to every visible bot response. If the bot only produces thoughts/commands with no chat-visible text, the footer is silently skipped.
-6. **Depletion and fill rates** must have at most 2 decimal places and be ≤ 99. Fill rates default to 1 (one emoji = +1 stat point).
-7. The bot's **system prompt** includes current Tamagotchi status so the LLM is aware of its condition, but all stat changes are handled by the script — the LLM cannot cheat.
-
-### 💀 Tamagotchi Hardcore Mode
+#### Button Configuration
 
 | Command | Description |
 |---|---|
-| `/set-hardcore-sickness-stat` | Set the max sickness value (death threshold, max 2 decimals, ≤ 99) |
-| `/set-hardcore-tamagochi-medicine` | Set medicine emoji and heal amount per emoji |
-| `/set-hardcore-tamagochi-sickness-thresh-hold` | Set stat thresholds below which sickness increases |
-| `/set-hardcore-tamagochi-sickness-increase` | Set how much sickness increases per turn per stat below threshold |
-| `/set-tamagochi-rip-message` | Set a custom death message (leave empty to use the default) |
-| `/set-hardcore-tamagochi-mode` | Enable/disable hardcore mode (all settings above must be configured first) |
+| `/set-tama-feed` | Set hunger restored and cooldown for the Feed button |
+| `/set-tama-drink` | Set thirst restored and cooldown for the Drink button |
+| `/set-tama-play` | Set happiness gain, hunger/thirst cost, and cooldown for the Play button |
+| `/set-tama-medicate` | Set cooldown for the Medicate button |
+| `/set-tama-clean` | Set cooldown for the Clean button |
+
+#### Response Messages
+
+| Command | Description |
+|---|---|
+| `/set-resp-food` | Message shown when someone feeds the bot |
+| `/set-resp-drink` | Message shown when someone gives a drink |
+| `/set-resp-play` | Message shown when starting a play session |
+| `/set-resp-medicate` | Message shown when medication is given |
+| `/set-resp-medicate-healthy` | Ephemeral error when medicating a healthy bot |
+| `/set-resp-clean` | Message shown when cleaning poop |
+| `/set-resp-clean-none` | Ephemeral error when there's nothing to clean |
+| `/set-resp-full` | Ephemeral error when the bot is satiated |
+| `/set-resp-cooldown` | Cooldown error (use `{time}` placeholder for countdown) |
+| `/set-tama-rip-message` | Custom death message (leave empty for default) |
+
+#### Admin
+
+| Command | Description |
+|---|---|
+| `/show-tama-stats` | View all current stats, config values, and cooldowns |
+| `/reset-tama-stats` | Reset all stats to their maximum values |
 
 **How it works:**
 
-1. **Configure all settings** — max sickness, medicine emoji, thresholds, and sickness increase rates.
-2. **Enable hardcore** with `/set-hardcore-tamagochi-mode true` (refuses if anything is missing, and tells you what).
-3. **Sickness increases** each turn for every stat that is below its threshold. Multiple stats below threshold stack.
-4. **Medicine emoji** in user messages **decrease sickness** by the configured heal amount.
-5. **Death** — when sickness reaches max: the soul file (`soul.md`) is wiped clean, all stats reset to max, sickness resets to 0, `[ce]` is sent to **all allowed channels and the SoC channel** (wiping all context), and the death message is posted in chat.
-6. **Custom death message** — use `/set-tamagochi-rip-message` to set a custom message. Leave empty to use the default.
-7. **Disabling** hardcore mode resets sickness to 0 and removes sickness from the footer.
+1. **Enable** with `/set-tama-mode true` — all defaults are pre-configured, so it works out of the box.
+2. **Stats deplete** each time the bot generates a response. Hunger, thirst, happiness, energy, and satiation all decrease per inference.
+3. **Users interact via buttons** attached to every bot response:
+   - 🍔 **Feed** — restores hunger, increases satiation, counts toward poop
+   - 🥤 **Drink** — restores thirst, increases satiation
+   - 🎮 **Play** — starts a Rock-Paper-Scissors minigame, costs hunger/thirst/energy, gains happiness
+   - 💉 **Medicate** — cures sickness (ephemeral error if not sick)
+   - 🚿 **Clean** — removes all poop (ephemeral error if already clean)
+4. **Satiation** — when the bot is fully satiated, a cooldown timer starts and feeding/drinking is blocked until it expires.
+5. **Poop** — accumulates after a configurable number of feeds. Uncleaned poop drains health on a background timer.
+6. **Sickness** — a boolean flag that causes health damage each turn. Cure with the Medicate button.
+7. **Health** — decreases when stats are below threshold, when sick, or from uncleaned poop. At 0 health → **death**.
+8. **Death** — wipes `soul.md`, resets all stats, sends `[ce]` to all allowed channels and SoC channel.
+9. **Error messages** (cooldown, satiated, not sick, already clean) are **ephemeral** — only visible to the user who clicked.
+10. All **cooldowns are global** (not per-user) and configurable per button.
+11. The bot's **system prompt** includes current stats so the LLM is aware of its condition, but all stat changes are handled by script — the LLM cannot cheat.
 
 ---
 

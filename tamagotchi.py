@@ -1,66 +1,228 @@
 """
-tamagotchi.py — Tamagotchi minigame logic for ChatBuddy.
+tamagotchi.py — Gamified Tamagotchi system for ChatBuddy.
 
-Handles stat depletion, emoji consumption from user input, footer
-generation, system-prompt injection, and hardcore-mode sickness.
+Handles all Tamagotchi stats, Discord button UI (stat display + action
+buttons), cooldowns, satiation timer, poop background damage, the
+Rock-Paper-Scissors minigame, death/reset, and system-prompt injection.
+
 All stat changes are managed here so the LLM cannot cheat.
 """
 
-import re
-import emoji as emoji_lib  # python-emoji library for robust detection
+import asyncio
+import random
+import time
+import discord
+from discord import ui
 from config import save_config
 
 
-# ── Validation helpers ────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Helpers
+# ══════════════════════════════════════════════════════════════════════════════
 
-def validate_rate(value: float) -> bool:
-    """Return True if *value* has at most 2 decimal places and is <= 99."""
-    if value < 0 or value > 99:
-        return False
-    # Check decimal places: multiply by 100, see if it's (close to) an integer
-    scaled = round(value * 100, 6)
-    return abs(scaled - round(scaled)) < 1e-6
+def _fs(val: float) -> str:
+    """Format a stat value: integer if whole, else up to 2 decimals."""
+    if val == int(val):
+        return str(int(val))
+    return f"{val:.2f}".rstrip("0").rstrip(".")
 
 
-def parse_emoji_list(text: str) -> list[str]:
+def _fmt_countdown(seconds: float) -> str:
+    """Return a human-readable countdown string like '4m 32s'."""
+    s = max(0, int(seconds))
+    if s >= 60:
+        return f"{s // 60}m {s % 60:02d}s"
+    return f"{s}s"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TamagotchiManager  — runtime state that doesn't belong in config.json
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TamagotchiManager:
     """
-    Extract individual emoji from a user-provided string.
-
-    Accepts comma-separated or space-separated input.  Uses the `emoji`
-    library so both Unicode emoji (🍔) and shortcodes are handled.
-    Discord custom emoji (<:name:id> / <a:name:id>) are also captured.
+    Manages ephemeral runtime state:
+      • Global button cooldowns  (dict[str, float] — action → timestamp)
+      • Satiation timer           (asyncio.Task or None)
+      • Satiation expiry epoch    (float — 0.0 if inactive)
+      • Poop-damage background    (asyncio.Task or None)
+      • RPS pending games         (dict[int, str] — message_id → bot_choice)
     """
-    found: list[str] = []
 
-    # 1) Capture Discord custom emoji  <:name:id> / <a:name:id>
-    discord_pattern = re.compile(r"<a?:\w+:\d+>")
-    for m in discord_pattern.finditer(text):
-        found.append(m.group(0))
-    # Remove them so they don't interfere with Unicode extraction
-    text = discord_pattern.sub("", text)
+    def __init__(self, bot: discord.Client, config: dict):
+        self.bot = bot
+        self.config = config
+        self._cooldowns: dict[str, float] = {}     # action -> expiry epoch
+        self._satiation_task: asyncio.Task | None = None
+        self._satiation_expiry: float = 0.0
+        self._dirt_task: asyncio.Task | None = None
+        self._rps_games: dict[int, str] = {}        # msg_id -> bot_choice
 
-    # 2) Extract Unicode emoji
-    for ch in text:
-        if emoji_lib.is_emoji(ch):
-            found.append(ch)
+    # ── lifecycle ─────────────────────────────────────────────────────────
 
-    # Also handle multi-char emoji sequences (flags, skin tones, ZWJ sequences)
-    for em_data in emoji_lib.emoji_list(text):
-        em = em_data["emoji"]
-        if em not in found:
-            found.append(em)
+    def start(self):
+        """Start background tasks if tama is enabled."""
+        if self.config.get("tama_enabled", False):
+            self._start_dirt_task()
 
-    return found
+    def stop(self):
+        if self._satiation_task and not self._satiation_task.done():
+            self._satiation_task.cancel()
+        if self._dirt_task and not self._dirt_task.done():
+            self._dirt_task.cancel()
+
+    # ── cooldowns ─────────────────────────────────────────────────────────
+
+    def check_cooldown(self, action: str) -> float:
+        """
+        Return 0.0 if *action* is off cooldown.
+        Otherwise return seconds remaining.
+        """
+        expiry = self._cooldowns.get(action, 0.0)
+        remaining = expiry - time.time()
+        return max(0.0, remaining)
+
+    def set_cooldown(self, action: str, seconds: int):
+        self._cooldowns[action] = time.time() + seconds
+
+    # ── satiation timer ───────────────────────────────────────────────────
+
+    @property
+    def satiation_active(self) -> bool:
+        return self._satiation_expiry > time.time()
+
+    @property
+    def satiation_remaining(self) -> float:
+        return max(0.0, self._satiation_expiry - time.time())
+
+    def start_satiation_timer(self):
+        duration = self.config.get("tama_satiation_timer", 300)
+        self._satiation_expiry = time.time() + duration
+        if self._satiation_task and not self._satiation_task.done():
+            self._satiation_task.cancel()
+        self._satiation_task = asyncio.create_task(self._satiation_countdown(duration))
+
+    async def _satiation_countdown(self, duration: float):
+        try:
+            await asyncio.sleep(duration)
+        except asyncio.CancelledError:
+            return
+        # Timer expired — reset satiation to 0
+        self.config["tama_satiation"] = 0.0
+        self._satiation_expiry = 0.0
+        save_config(self.config)
+
+    # ── poop damage background ────────────────────────────────────────────
+
+    def _start_dirt_task(self):
+        if self._dirt_task and not self._dirt_task.done():
+            self._dirt_task.cancel()
+        self._dirt_task = asyncio.create_task(self._dirt_damage_loop())
+
+    async def _dirt_damage_loop(self):
+        try:
+            while True:
+                interval = self.config.get("tama_dirt_damage_interval", 600)
+                await asyncio.sleep(interval)
+                if not self.config.get("tama_enabled", False):
+                    continue
+                dirt = self.config.get("tama_dirt", 0)
+                if dirt <= 0:
+                    continue
+                dmg = self.config.get("tama_dirt_health_damage", 0.5) * dirt
+                self.config["tama_health"] = max(
+                    0.0, round(self.config.get("tama_health", 0) - dmg, 2)
+                )
+                save_config(self.config)
+                # Check death
+                if self.config["tama_health"] <= 0:
+                    death_msg = trigger_death(self.config)
+                    await _broadcast_death_and_message(self.bot, self.config, death_msg)
+        except asyncio.CancelledError:
+            return
 
 
-# ── Death mechanic (hardcore mode) ────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Stat Logic
+# ══════════════════════════════════════════════════════════════════════════════
+
+def deplete_stats(config: dict) -> str | None:
+    """
+    Called after every LLM inference.  Depletes hunger, thirst, happiness,
+    energy (api), satiation.  Applies health damage from stats below
+    threshold and from sickness.  Checks for death.
+
+    Returns None normally, or a death-message string if death occurred.
+    """
+    if not config.get("tama_enabled", False):
+        return None
+
+    # Deplete hunger / thirst / happiness
+    config["tama_hunger"] = max(
+        0.0, round(config.get("tama_hunger", 0) - config.get("tama_hunger_depletion", 0.2), 2)
+    )
+    config["tama_thirst"] = max(
+        0.0, round(config.get("tama_thirst", 0) - config.get("tama_thirst_depletion", 0.3), 2)
+    )
+    config["tama_happiness"] = max(
+        0.0, round(config.get("tama_happiness", 0) - config.get("tama_happiness_depletion", 0.1), 2)
+    )
+
+    # Deplete energy (API call)
+    config["tama_energy"] = max(
+        0.0, round(config.get("tama_energy", 0) - config.get("tama_energy_depletion_api", 0.1), 2)
+    )
+
+    # Deplete satiation
+    config["tama_satiation"] = max(
+        0.0, round(config.get("tama_satiation", 0) - config.get("tama_satiation_depletion", 0.2), 2)
+    )
+
+    # ── Health damage from stats below threshold ──
+    threshold = config.get("tama_health_threshold", 2.0)
+    dmg_per = config.get("tama_health_damage_per_stat", 1.0)
+    health_loss = 0.0
+    for stat_key in ("tama_hunger", "tama_thirst", "tama_happiness"):
+        if config.get(stat_key, 0) < threshold:
+            health_loss += dmg_per
+
+    # ── Sickness damage ──
+    if config.get("tama_sick", False):
+        health_loss += config.get("tama_sick_health_damage", 0.5)
+
+    if health_loss > 0:
+        config["tama_health"] = max(
+            0.0, round(config.get("tama_health", 0) - health_loss, 2)
+        )
+
+    save_config(config)
+
+    # Death check
+    if config["tama_health"] <= 0:
+        return trigger_death(config)
+
+    return None
+
+
+def deplete_energy_game(config: dict):
+    """Called when a game (e.g. RPS) is played — deducts game energy cost."""
+    if not config.get("tama_enabled", False):
+        return
+    config["tama_energy"] = max(
+        0.0, round(config.get("tama_energy", 0) - config.get("tama_energy_depletion_game", 0.2), 2)
+    )
+    save_config(config)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Death / Reset
+# ══════════════════════════════════════════════════════════════════════════════
 
 def trigger_death(config: dict) -> str:
     """
-    The Tamagotchi has died!  Wipe soul.md, reset all stats to max,
-    reset sickness to 0.  Returns the death message string.
+    Wipe soul.md, reset ALL stats to max, clear sickness.
+    Returns the death message string.
     """
-    # Wipe soul.md
     try:
         with open("soul.md", "w", encoding="utf-8") as f:
             f.write("{}")
@@ -68,17 +230,20 @@ def trigger_death(config: dict) -> str:
     except Exception as e:
         print(f"[Tamagotchi] DEATH — Failed to wipe soul.md: {e}")
 
-    # Reset stats to max
-    config["tamagotchi_hunger"] = float(config.get("tamagotchi_max_hunger", 10))
-    config["tamagotchi_thirst"] = float(config.get("tamagotchi_max_thirst", 10))
-    config["tamagotchi_happiness"] = float(config.get("tamagotchi_max_happiness", 10))
-    config["tamagotchi_sickness"] = 0.0
+    config["tama_hunger"] = float(config.get("tama_hunger_max", 10))
+    config["tama_thirst"] = float(config.get("tama_thirst_max", 10))
+    config["tama_happiness"] = float(config.get("tama_happiness_max", 10))
+    config["tama_health"] = float(config.get("tama_health_max", 10))
+    config["tama_energy"] = float(config.get("tama_energy_max", 10))
+    config["tama_satiation"] = 0.0
+    config["tama_dirt"] = 0
+    config["tama_dirt_food_counter"] = 0
+    config["tama_sick"] = False
     save_config(config)
 
-    # Use custom rip message or default
-    custom_msg = config.get("tamagotchi_rip_message", "").strip()
-    if custom_msg:
-        return custom_msg
+    custom = config.get("tama_rip_message", "").strip()
+    if custom:
+        return custom
     return (
         "💀 **The Tamagotchi has died!** 💀\n"
         "Its soul has been wiped clean… all memories are gone.\n"
@@ -87,23 +252,14 @@ def trigger_death(config: dict) -> str:
 
 
 async def broadcast_death(bot, config: dict) -> None:
-    """
-    After death, send [ce] to every allowed channel and the SoC channel
-    to wipe all context.  Called by the caller that detected death.
-    """
-    # Gather all channel IDs to send [ce] to
+    """Send [ce] to every allowed channel + SoC channel."""
     channel_ids: set[int] = set()
-
-    # All allowed (whitelisted) channels
-    allowed = config.get("allowed_channels", {})
-    for ch_id_str, enabled in allowed.items():
+    for ch_id_str, enabled in config.get("allowed_channels", {}).items():
         if enabled:
             try:
                 channel_ids.add(int(ch_id_str))
             except (ValueError, TypeError):
                 pass
-
-    # SoC (thoughts) channel
     if config.get("soc_enabled", False):
         soc_id = config.get("soc_channel_id")
         if soc_id:
@@ -111,8 +267,6 @@ async def broadcast_death(bot, config: dict) -> None:
                 channel_ids.add(int(soc_id))
             except (ValueError, TypeError):
                 pass
-
-    # Send [ce] to each channel
     for ch_id in channel_ids:
         ch = bot.get_channel(ch_id)
         if ch is not None:
@@ -122,243 +276,429 @@ async def broadcast_death(bot, config: dict) -> None:
                 print(f"[Tamagotchi] Failed to send [ce] to channel {ch_id}: {e}")
 
 
-# ── Stat management ───────────────────────────────────────────────────────────
-
-def deplete_stats(config: dict) -> str | None:
-    """
-    Subtract depletion rates from current stats, clamping at 0.
-    Called after every generate() call (any inference path).
-
-    If hardcore mode is enabled, also evaluates sickness increases
-    based on thresholds.  If sickness reaches max → triggers death.
-
-    Returns:
-        None  — normal operation
-        str   — death message (caller must post this in the channel)
-    """
-    if not config.get("tamagotchi_enabled", False):
-        return None
-
-    config["tamagotchi_hunger"] = max(
-        0.0, round(config.get("tamagotchi_hunger", 0) - config.get("tamagotchi_depletion_food", 1.0), 2)
-    )
-    config["tamagotchi_thirst"] = max(
-        0.0, round(config.get("tamagotchi_thirst", 0) - config.get("tamagotchi_depletion_thirst", 1.0), 2)
-    )
-    config["tamagotchi_happiness"] = max(
-        0.0, round(config.get("tamagotchi_happiness", 0) - config.get("tamagotchi_depletion_happiness", 1.0), 2)
-    )
-
-    # ── Hardcore sickness logic ───────────────────────────────────────
-    death_msg = None
-    if config.get("tamagotchi_hardcore_enabled", False):
-        sickness = config.get("tamagotchi_sickness", 0.0)
-
-        # Check each stat vs threshold — add sickness for each below
-        hunger = config.get("tamagotchi_hunger", 0)
-        thirst = config.get("tamagotchi_thirst", 0)
-        happiness = config.get("tamagotchi_happiness", 0)
-
-        thresh_food = config.get("tamagotchi_sickness_threshold_food", 2.0)
-        thresh_thirst = config.get("tamagotchi_sickness_threshold_thirst", 2.0)
-        thresh_happiness = config.get("tamagotchi_sickness_threshold_happiness", 2.0)
-
-        inc_food = config.get("tamagotchi_sickness_increase_food", 1.0)
-        inc_thirst = config.get("tamagotchi_sickness_increase_thirst", 1.0)
-        inc_happiness = config.get("tamagotchi_sickness_increase_happiness", 1.0)
-
-        if hunger < thresh_food:
-            sickness = round(sickness + inc_food, 2)
-        if thirst < thresh_thirst:
-            sickness = round(sickness + inc_thirst, 2)
-        if happiness < thresh_happiness:
-            sickness = round(sickness + inc_happiness, 2)
-
-        max_sickness = config.get("tamagotchi_max_sickness", 10)
-        config["tamagotchi_sickness"] = min(sickness, float(max_sickness))
-
-        # Check for death
-        if config["tamagotchi_sickness"] >= max_sickness:
-            death_msg = trigger_death(config)
-            save_config(config)
-            return death_msg
-
-    save_config(config)
-    return death_msg
+async def _broadcast_death_and_message(bot, config: dict, death_msg: str):
+    """Post death message in all allowed channels, then broadcast [ce]."""
+    for ch_id_str, enabled in config.get("allowed_channels", {}).items():
+        if enabled:
+            try:
+                ch = bot.get_channel(int(ch_id_str))
+                if ch:
+                    await ch.send(death_msg)
+            except Exception:
+                pass
+    await broadcast_death(bot, config)
 
 
-def consume_emoji(text: str, config: dict) -> dict[str, int]:
-    """
-    Scan *text* for accepted Tamagotchi emoji and increase stats accordingly.
-
-    Only call this with USER-authored text (not bot output).
-    Respects ``tamagotchi_max_consumption`` — if non-zero, at most that many
-    emoji are consumed from *text*.  Returns a dict of counts per category.
-
-    In hardcore mode, also scans for medicine emoji to decrease sickness.
-    """
-    if not config.get("tamagotchi_enabled", False):
-        return {}
-
-    food_set = set(config.get("tamagotchi_food_emoji", []))
-    drink_set = set(config.get("tamagotchi_drink_emoji", []))
-    entertainment_set = set(config.get("tamagotchi_entertainment_emoji", []))
-
-    # Hardcore medicine
-    hardcore = config.get("tamagotchi_hardcore_enabled", False)
-    medicine_set = set(config.get("tamagotchi_medicine_emoji", [])) if hardcore else set()
-    medicine_heal = config.get("tamagotchi_medicine_heal", 1.0) if hardcore else 0
-
-    max_consumption = config.get("tamagotchi_max_consumption", 0)
-    fill_food = config.get("tamagotchi_fill_food", 1.0)
-    fill_thirst = config.get("tamagotchi_fill_thirst", 1.0)
-    fill_happiness = config.get("tamagotchi_fill_happiness", 1.0)
-
-    # Collect all emoji in order of appearance
-    emoji_in_text: list[str] = []
-
-    # Discord custom emoji
-    discord_pattern = re.compile(r"<a?:\w+:\d+>")
-    # Build a position-ordered list of (position, emoji_str)
-    ordered: list[tuple[int, str]] = []
-    for m in discord_pattern.finditer(text):
-        ordered.append((m.start(), m.group(0)))
-
-    # Remove discord emoji before scanning Unicode
-    clean_text = discord_pattern.sub("", text)
-
-    # Unicode emoji — use emoji_list for position-aware extraction
-    for em_data in emoji_lib.emoji_list(clean_text):
-        ordered.append((em_data["match_start"], em_data["emoji"]))
-
-    # Sort by position so we process left-to-right
-    ordered.sort(key=lambda x: x[0])
-    emoji_in_text = [e for _, e in ordered]
-
-    # Apply max_consumption limit
-    if max_consumption > 0:
-        emoji_in_text = emoji_in_text[:max_consumption]
-
-    counts = {"food": 0, "drink": 0, "entertainment": 0, "medicine": 0}
-    for em in emoji_in_text:
-        if em in food_set:
-            config["tamagotchi_hunger"] = min(
-                config.get("tamagotchi_max_hunger", 10),
-                round(config.get("tamagotchi_hunger", 0) + fill_food, 2),
-            )
-            counts["food"] += 1
-        elif em in drink_set:
-            config["tamagotchi_thirst"] = min(
-                config.get("tamagotchi_max_thirst", 10),
-                round(config.get("tamagotchi_thirst", 0) + fill_thirst, 2),
-            )
-            counts["drink"] += 1
-        elif em in entertainment_set:
-            config["tamagotchi_happiness"] = min(
-                config.get("tamagotchi_max_happiness", 10),
-                round(config.get("tamagotchi_happiness", 0) + fill_happiness, 2),
-            )
-            counts["entertainment"] += 1
-        elif em in medicine_set:
-            config["tamagotchi_sickness"] = max(
-                0.0,
-                round(config.get("tamagotchi_sickness", 0) - medicine_heal, 2),
-            )
-            counts["medicine"] += 1
-
-    if any(counts.values()):
-        save_config(config)
-
-    return counts
-
-
-# ── Footer / prompt helpers ───────────────────────────────────────────────────
-
-def _format_stat(val: float) -> str:
-    """Format a stat value: show integer if whole, otherwise up to 2 decimals."""
-    if val == int(val):
-        return str(int(val))
-    return f"{val:.2f}".rstrip("0").rstrip(".")
-
-
-def build_tamagotchi_footer(config: dict) -> str:
-    """
-    Return the small-text stats footer, e.g.
-        -# 🍔 5/10 | 💧 3.5/10 | 😊 7/10
-    With hardcore:
-        -# 🍔 5/10 | 💧 3.5/10 | 😊 7/10 | 🤒 2/10
-
-    Returns '' if tamagotchi mode is disabled.
-    """
-    if not config.get("tamagotchi_enabled", False):
-        return ""
-
-    hunger = config.get("tamagotchi_hunger", 0)
-    thirst = config.get("tamagotchi_thirst", 0)
-    happiness = config.get("tamagotchi_happiness", 0)
-    max_h = config.get("tamagotchi_max_hunger", 10)
-    max_t = config.get("tamagotchi_max_thirst", 10)
-    max_hp = config.get("tamagotchi_max_happiness", 10)
-
-    footer = (
-        f"-# 🍔 {_format_stat(hunger)}/{max_h} "
-        f"| 💧 {_format_stat(thirst)}/{max_t} "
-        f"| 😊 {_format_stat(happiness)}/{max_hp}"
-    )
-
-    if config.get("tamagotchi_hardcore_enabled", False):
-        sickness = config.get("tamagotchi_sickness", 0)
-        max_s = config.get("tamagotchi_max_sickness", 10)
-        footer += f" | 🤒 {_format_stat(sickness)}/{max_s}"
-
-    return footer
-
+# ══════════════════════════════════════════════════════════════════════════════
+# System Prompt Injection
+# ══════════════════════════════════════════════════════════════════════════════
 
 def build_tamagotchi_system_prompt(config: dict) -> str:
-    """
-    Build the system-prompt injection describing current Tamagotchi state.
-    Returns '' if tamagotchi mode is disabled.
-    """
-    if not config.get("tamagotchi_enabled", False):
+    """Build the system-prompt injection describing current Tamagotchi state."""
+    if not config.get("tama_enabled", False):
         return ""
 
-    hunger = config.get("tamagotchi_hunger", 0)
-    thirst = config.get("tamagotchi_thirst", 0)
-    happiness = config.get("tamagotchi_happiness", 0)
-    max_h = config.get("tamagotchi_max_hunger", 10)
-    max_t = config.get("tamagotchi_max_thirst", 10)
-    max_hp = config.get("tamagotchi_max_happiness", 10)
+    hunger     = config.get("tama_hunger", 0)
+    thirst     = config.get("tama_thirst", 0)
+    happiness  = config.get("tama_happiness", 0)
+    health     = config.get("tama_health", 0)
+    energy     = config.get("tama_energy", 0)
+    satiation  = config.get("tama_satiation", 0)
+    dirt       = config.get("tama_dirt", 0)
+    sick       = config.get("tama_sick", False)
 
-    food_emoji = " ".join(config.get("tamagotchi_food_emoji", []))
-    drink_emoji = " ".join(config.get("tamagotchi_drink_emoji", []))
-    ent_emoji = " ".join(config.get("tamagotchi_entertainment_emoji", []))
+    max_hunger  = config.get("tama_hunger_max", 10)
+    max_thirst  = config.get("tama_thirst_max", 10)
+    max_happy   = config.get("tama_happiness_max", 10)
+    max_health  = config.get("tama_health_max", 10)
+    max_energy  = config.get("tama_energy_max", 10)
+    max_sat     = config.get("tama_satiation_max", 10)
+    max_dirt    = config.get("tama_dirt_max", 4)
 
     lines = [
         "[TAMAGOTCHI STATUS — Your virtual pet stats. "
         "These are managed by script; you cannot change them yourself.",
-        f"Hunger: {_format_stat(hunger)}/{max_h}",
-        f"Thirst: {_format_stat(thirst)}/{max_t}",
-        f"Happiness: {_format_stat(happiness)}/{max_hp}",
+        f"Hunger: {_fs(hunger)}/{max_hunger}",
+        f"Thirst: {_fs(thirst)}/{max_thirst}",
+        f"Happiness: {_fs(happiness)}/{max_happy}",
+        f"Health: {_fs(health)}/{max_health}",
+        f"Energy: {_fs(energy)}/{max_energy}",
+        f"Satiation: {_fs(satiation)}/{max_sat}",
+        f"Dirtiness (poop): {dirt}/{max_dirt}",
+        f"Sick: {'YES' if sick else 'No'}",
+        "Users interact via buttons (feed, drink, play, medicate, clean). "
+        "Your stats decrease each time you respond. "
+        "If your health reaches 0, you die — your soul is wiped and stats reset.]",
     ]
+    return "\n".join(lines)
 
-    # Add hardcore sickness info
-    if config.get("tamagotchi_hardcore_enabled", False):
-        sickness = config.get("tamagotchi_sickness", 0)
-        max_s = config.get("tamagotchi_max_sickness", 10)
-        med_emoji = " ".join(config.get("tamagotchi_medicine_emoji", []))
-        lines.append(f"Sickness: {_format_stat(sickness)}/{max_s} (HARDCORE MODE)")
-        lines.append(f"Accepted medicine emoji: {med_emoji or '(none)'}")
-        lines.append(
-            "If sickness reaches max, you die — your soul is wiped and stats reset. "
-            "Users can give you medicine emoji to reduce sickness."
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Discord UI — Stat Display Buttons (grey, non-interactive)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TamagotchiView(ui.View):
+    """
+    Persistent view with stat display (grey buttons) + action buttons.
+    Attached to every bot response when tama_enabled is True.
+    """
+
+    def __init__(self, config: dict, manager: TamagotchiManager):
+        # timeout=None makes the view persistent
+        super().__init__(timeout=None)
+        self.config = config
+        self.manager = manager
+        self._build()
+
+    def _build(self):
+        # ── Row 0 + 1: Stat display buttons (grey, disabled) ──
+        hunger    = self.config.get("tama_hunger", 0)
+        thirst    = self.config.get("tama_thirst", 0)
+        happiness = self.config.get("tama_happiness", 0)
+        health    = self.config.get("tama_health", 0)
+        energy    = self.config.get("tama_energy", 0)
+        dirt      = self.config.get("tama_dirt", 0)
+        sick      = self.config.get("tama_sick", False)
+
+        max_hunger  = self.config.get("tama_hunger_max", 10)
+        max_thirst  = self.config.get("tama_thirst_max", 10)
+        max_happy   = self.config.get("tama_happiness_max", 10)
+        max_health  = self.config.get("tama_health_max", 10)
+        max_energy  = self.config.get("tama_energy_max", 10)
+        max_sat     = self.config.get("tama_satiation_max", 10)
+        max_dirt    = self.config.get("tama_dirt_max", 4)
+
+        # Satiation display: show countdown if timer active, else number
+        if self.manager.satiation_active:
+            sat_label = f"🤰 {_fmt_countdown(self.manager.satiation_remaining)}"
+        else:
+            satiation = self.config.get("tama_satiation", 0)
+            sat_label = f"🤰 {_fs(satiation)}/{max_sat}"
+
+        stat_items = [
+            (f"🍔 {_fs(hunger)}/{max_hunger}", 0),
+            (f"🥤 {_fs(thirst)}/{max_thirst}", 0),
+            (f"😊 {_fs(happiness)}/{max_happy}", 0),
+            (f"❤️ {_fs(health)}/{max_health}", 0),
+            (sat_label, 0),
+            # Row 1
+            (f"⚡ {_fs(energy)}/{max_energy}", 1),
+            (f"💩 {dirt}/{max_dirt}", 1),
+        ]
+
+        # Conditionally add sickness icon
+        if sick:
+            stat_items.append(("💀 Sick", 1))
+
+        for label, row in stat_items:
+            btn = ui.Button(
+                label=label,
+                style=discord.ButtonStyle.secondary,
+                disabled=True,
+                row=row,
+            )
+            self.add_item(btn)
+
+        # ── Row 2: Action buttons ──
+        self.add_item(FeedButton(self.config, self.manager))
+        self.add_item(DrinkButton(self.config, self.manager))
+        self.add_item(PlayButton(self.config, self.manager))
+        self.add_item(MedicateButton(self.config, self.manager))
+        self.add_item(CleanButton(self.config, self.manager))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Action Buttons
+# ══════════════════════════════════════════════════════════════════════════════
+
+class FeedButton(ui.Button):
+    def __init__(self, config, manager):
+        super().__init__(
+            label="🍔 Feed",
+            style=discord.ButtonStyle.success,
+            custom_id="tama_feed",
+            row=2,
+        )
+        self.config = config
+        self.manager = manager
+
+    async def callback(self, interaction: discord.Interaction):
+        # Cooldown check
+        remaining = self.manager.check_cooldown("feed")
+        if remaining > 0:
+            msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
+                "{time}", _fmt_countdown(remaining)
+            )
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        # Satiation check
+        if self.manager.satiation_active:
+            msg = self.config.get("tama_resp_full", "🤰 I'm stuffed!")
+            remaining_sat = self.manager.satiation_remaining
+            msg += f"\n⏳ Wait **{_fmt_countdown(remaining_sat)}**."
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        # Apply feed
+        max_hunger = self.config.get("tama_hunger_max", 10)
+        fill = self.config.get("tama_feed_amount", 1.0)
+        self.config["tama_hunger"] = min(
+            float(max_hunger), round(self.config.get("tama_hunger", 0) + fill, 2)
         )
 
-    lines.append(f"Accepted food emoji: {food_emoji or '(none)'}")
-    lines.append(f"Accepted drink emoji: {drink_emoji or '(none)'}")
-    lines.append(f"Accepted entertainment emoji: {ent_emoji or '(none)'}")
-    lines.append(
-        "Users can feed you by including these emoji in their messages. "
-        "Your stats decrease each time you respond.]"
-    )
+        # Satiation increase
+        sat_inc = self.config.get("tama_satiation_food_increase", 1.0)
+        max_sat = self.config.get("tama_satiation_max", 10)
+        self.config["tama_satiation"] = min(
+            float(max_sat), round(self.config.get("tama_satiation", 0) + sat_inc, 2)
+        )
 
-    return "\n".join(lines)
+        # Poop counter
+        self.config["tama_dirt_food_counter"] = self.config.get("tama_dirt_food_counter", 0) + 1
+        poop_threshold = self.config.get("tama_dirt_food_threshold", 10)
+        if self.config["tama_dirt_food_counter"] >= poop_threshold:
+            max_dirt = self.config.get("tama_dirt_max", 4)
+            self.config["tama_dirt"] = min(max_dirt, self.config.get("tama_dirt", 0) + 1)
+            self.config["tama_dirt_food_counter"] = 0
+
+        # Check if satiation is now full → start timer
+        if self.config["tama_satiation"] >= max_sat:
+            self.manager.start_satiation_timer()
+
+        save_config(self.config)
+        self.manager.set_cooldown("feed", self.config.get("tama_cd_feed", 60))
+        msg = self.config.get("tama_resp_feed", "*nom nom* 🍔 Thanks for the food!")
+        await interaction.response.send_message(msg)
+
+
+class DrinkButton(ui.Button):
+    def __init__(self, config, manager):
+        super().__init__(
+            label="🥤 Drink",
+            style=discord.ButtonStyle.primary,
+            custom_id="tama_drink",
+            row=2,
+        )
+        self.config = config
+        self.manager = manager
+
+    async def callback(self, interaction: discord.Interaction):
+        remaining = self.manager.check_cooldown("drink")
+        if remaining > 0:
+            msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
+                "{time}", _fmt_countdown(remaining)
+            )
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        if self.manager.satiation_active:
+            msg = self.config.get("tama_resp_full", "🤰 I'm stuffed!")
+            remaining_sat = self.manager.satiation_remaining
+            msg += f"\n⏳ Wait **{_fmt_countdown(remaining_sat)}**."
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        max_thirst = self.config.get("tama_thirst_max", 10)
+        fill = self.config.get("tama_drink_amount", 1.0)
+        self.config["tama_thirst"] = min(
+            float(max_thirst), round(self.config.get("tama_thirst", 0) + fill, 2)
+        )
+
+        sat_inc = self.config.get("tama_satiation_drink_increase", 1.0)
+        max_sat = self.config.get("tama_satiation_max", 10)
+        self.config["tama_satiation"] = min(
+            float(max_sat), round(self.config.get("tama_satiation", 0) + sat_inc, 2)
+        )
+
+        if self.config["tama_satiation"] >= max_sat:
+            self.manager.start_satiation_timer()
+
+        save_config(self.config)
+        self.manager.set_cooldown("drink", self.config.get("tama_cd_drink", 60))
+        msg = self.config.get("tama_resp_drink", "*gulp gulp* 🥤 That hit the spot!")
+        await interaction.response.send_message(msg)
+
+
+class PlayButton(ui.Button):
+    def __init__(self, config, manager):
+        super().__init__(
+            label="🎮 Play",
+            style=discord.ButtonStyle.secondary,
+            custom_id="tama_play",
+            row=2,
+        )
+        # Override secondary → use blurple-ish. Discord doesn't have yellow,
+        # so we use secondary (grey) with the emoji to distinguish.
+        # Actually, let's explicitly set a style that is visually distinct.
+        # Discord button styles: primary=blue, secondary=grey, success=green, danger=red.
+        # No yellow exists. We'll keep secondary and rely on the emoji.
+        self.config = config
+        self.manager = manager
+
+    async def callback(self, interaction: discord.Interaction):
+        remaining = self.manager.check_cooldown("play")
+        if remaining > 0:
+            msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
+                "{time}", _fmt_countdown(remaining)
+            )
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        # Apply hunger/thirst loss for playing
+        hunger_loss = self.config.get("tama_play_hunger_loss", 0.4)
+        thirst_loss = self.config.get("tama_play_thirst_loss", 0.2)
+        self.config["tama_hunger"] = max(
+            0.0, round(self.config.get("tama_hunger", 0) - hunger_loss, 2)
+        )
+        self.config["tama_thirst"] = max(
+            0.0, round(self.config.get("tama_thirst", 0) - thirst_loss, 2)
+        )
+
+        # Happiness increase
+        happy_gain = self.config.get("tama_play_happiness", 1.0)
+        max_happy = self.config.get("tama_happiness_max", 10)
+        self.config["tama_happiness"] = min(
+            float(max_happy), round(self.config.get("tama_happiness", 0) + happy_gain, 2)
+        )
+
+        # Energy cost for game
+        deplete_energy_game(self.config)
+
+        self.manager.set_cooldown("play", self.config.get("tama_cd_play", 60))
+
+        # Start RPS minigame
+        bot_choice = random.choice(["rock", "paper", "scissors"])
+        msg = self.config.get("tama_resp_play", "🎮 Let's play!")
+        rps_view = RPSView(self.config, self.manager, bot_choice)
+        await interaction.response.send_message(
+            f"{msg}\n**Rock, Paper, Scissors — pick your move!**",
+            view=rps_view,
+            ephemeral=True,
+        )
+
+
+class MedicateButton(ui.Button):
+    def __init__(self, config, manager):
+        super().__init__(
+            label="💉 Medicate",
+            style=discord.ButtonStyle.secondary,
+            custom_id="tama_medicate",
+            row=2,
+        )
+        self.config = config
+        self.manager = manager
+
+    async def callback(self, interaction: discord.Interaction):
+        remaining = self.manager.check_cooldown("medicate")
+        if remaining > 0:
+            msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
+                "{time}", _fmt_countdown(remaining)
+            )
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        if not self.config.get("tama_sick", False):
+            msg = self.config.get("tama_resp_medicate_healthy", "I'm not sick!")
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        self.config["tama_sick"] = False
+        save_config(self.config)
+        self.manager.set_cooldown("medicate", self.config.get("tama_cd_medicate", 60))
+        msg = self.config.get("tama_resp_medicate", "💊 Feeling better!")
+        await interaction.response.send_message(msg)
+
+
+class CleanButton(ui.Button):
+    def __init__(self, config, manager):
+        super().__init__(
+            label="🚿 Clean",
+            style=discord.ButtonStyle.primary,
+            custom_id="tama_clean",
+            row=2,
+        )
+        self.config = config
+        self.manager = manager
+
+    async def callback(self, interaction: discord.Interaction):
+        remaining = self.manager.check_cooldown("clean")
+        if remaining > 0:
+            msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
+                "{time}", _fmt_countdown(remaining)
+            )
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        if self.config.get("tama_dirt", 0) <= 0:
+            msg = self.config.get("tama_resp_clean_none", "Already clean!")
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        self.config["tama_dirt"] = 0
+        save_config(self.config)
+        self.manager.set_cooldown("clean", self.config.get("tama_cd_clean", 60))
+        msg = self.config.get("tama_resp_clean", "🚿 Squeaky clean!")
+        await interaction.response.send_message(msg)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Rock-Paper-Scissors Minigame
+# ══════════════════════════════════════════════════════════════════════════════
+
+_RPS_EMOJI = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
+
+
+class RPSView(ui.View):
+    """Ephemeral view presented to the user to pick rock/paper/scissors."""
+
+    def __init__(self, config, manager, bot_choice: str):
+        super().__init__(timeout=60)
+        self.config = config
+        self.manager = manager
+        self.bot_choice = bot_choice
+
+    def _result(self, user_choice: str) -> str:
+        b = self.bot_choice
+        if user_choice == b:
+            return "draw"
+        wins = {"rock": "scissors", "scissors": "paper", "paper": "rock"}
+        return "win" if wins[user_choice] == b else "lose"
+
+    async def _play(self, interaction: discord.Interaction, user_choice: str):
+        result = self._result(user_choice)
+        u_emoji = _RPS_EMOJI[user_choice]
+        b_emoji = _RPS_EMOJI[self.bot_choice]
+
+        if result == "win":
+            text = f"You chose {u_emoji}, I chose {b_emoji} — **You win!** 🎉"
+        elif result == "lose":
+            text = f"You chose {u_emoji}, I chose {b_emoji} — **I win!** 😈"
+        else:
+            text = f"You chose {u_emoji}, I chose {b_emoji} — **It's a draw!** 🤝"
+
+        # Edit the original ephemeral message to show the result privately
+        await interaction.response.edit_message(content=text, view=None)
+
+        # Post the final result publicly
+        channel = interaction.channel
+        if channel:
+            public_text = (
+                f"🎮 **Rock Paper Scissors** — {interaction.user.display_name} vs Bot\n"
+                f"{text}"
+            )
+            await channel.send(public_text)
+
+        self.stop()
+
+    @ui.button(label="🪨 Rock", style=discord.ButtonStyle.primary, row=0)
+    async def rock_btn(self, interaction: discord.Interaction, button: ui.Button):
+        await self._play(interaction, "rock")
+
+    @ui.button(label="📄 Paper", style=discord.ButtonStyle.success, row=0)
+    async def paper_btn(self, interaction: discord.Interaction, button: ui.Button):
+        await self._play(interaction, "paper")
+
+    @ui.button(label="✂️ Scissors", style=discord.ButtonStyle.danger, row=0)
+    async def scissors_btn(self, interaction: discord.Interaction, button: ui.Button):
+        await self._play(interaction, "scissors")

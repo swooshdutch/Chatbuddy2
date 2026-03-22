@@ -22,7 +22,10 @@ from revival import RevivalManager
 from auto_chat import AutoChatManager
 from reminders import ReminderManager
 from heartbeat import HeartbeatManager
-from tamagotchi import consume_emoji, deplete_stats, build_tamagotchi_footer, validate_rate, parse_emoji_list, broadcast_death
+from tamagotchi import (
+    deplete_stats, broadcast_death,
+    TamagotchiManager, TamagotchiView,
+)
 
 # ---------------------------------------------------------------------------
 # Environment
@@ -52,6 +55,7 @@ revival_manager: RevivalManager | None = None
 auto_chat_manager: AutoChatManager | None = None
 reminder_manager: ReminderManager | None = None
 heartbeat_manager: HeartbeatManager | None = None
+tama_manager: TamagotchiManager | None = None
 
 # Message batching: tracks which channels are mid-generation and queues
 # incoming mentions/replies so they can be processed as a single batch.
@@ -119,7 +123,7 @@ async def _handle_soc_extraction(response_text: str, bot_ref, config: dict) -> s
 
 @bot.event
 async def on_ready():
-    global bot_config, revival_manager, auto_chat_manager, reminder_manager, heartbeat_manager
+    global bot_config, revival_manager, auto_chat_manager, reminder_manager, heartbeat_manager, tama_manager
     bot_config = load_config()
 
     revival_manager = RevivalManager(bot, bot_config)
@@ -133,6 +137,9 @@ async def on_ready():
 
     heartbeat_manager = HeartbeatManager(bot, bot_config)
     heartbeat_manager.start()
+
+    tama_manager = TamagotchiManager(bot, bot_config)
+    tama_manager.start()
 
     try:
         synced = await bot.tree.sync()
@@ -232,9 +239,6 @@ async def _generate_and_respond(message: discord.Message):
         if not user_text:
             user_text = "(empty message)"
 
-        # Tamagotchi: consume emoji from user input BEFORE generate
-        consume_emoji(message.content, bot_config)
-
         import re
         if bot_config.get("duck_search_enabled", False):
             if "!search" in user_text.lower():
@@ -322,24 +326,28 @@ async def _generate_and_respond(message: discord.Message):
         # Resolve custom emoji shortcodes before sending
         response_text = resolve_custom_emoji(response_text, message.guild)
 
-        # Tamagotchi: append stats footer only if there is visible text to send
-        tama_footer = build_tamagotchi_footer(bot_config)
-        if tama_footer and response_text.strip():
-            response_text = response_text.rstrip() + "\n" + tama_footer
+        # Tamagotchi: build button view if enabled
+        tama_view = None
+        if bot_config.get("tama_enabled", False) and tama_manager:
+            tama_view = TamagotchiView(bot_config, tama_manager)
 
         if audio_bytes:
             audio_file = discord.File(fp=io.BytesIO(audio_bytes), filename="chatbuddy_voice.wav")
             await message.reply(file=audio_file, mention_author=False)
             chunks = chunk_message(response_text)
-            for chunk in chunks:
-                await message.channel.send(chunk)
+            for i, chunk in enumerate(chunks):
+                # Attach tama view to the last text chunk
+                v = tama_view if (i == len(chunks) - 1 and tama_view) else None
+                await message.channel.send(chunk, view=v)
         else:
             chunks = chunk_message(response_text)
             for i, chunk in enumerate(chunks):
+                # Attach tama view to the last chunk
+                v = tama_view if (i == len(chunks) - 1 and tama_view) else None
                 if i == 0:
-                    await message.reply(chunk, mention_author=False)
+                    await message.reply(chunk, mention_author=False, view=v)
                 else:
-                    await message.channel.send(chunk)
+                    await message.channel.send(chunk, view=v)
 
         # Send soul logs to configured channel if present
         if soul_logs and bot_config.get("soul_channel_enabled"):
@@ -373,9 +381,7 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
             + "\n".join(batch_lines)
         )
 
-        # Tamagotchi: consume emoji from all user messages in the batch
-        for msg in batch:
-            consume_emoji(msg.content, bot_config)
+
 
         import re
         if bot_config.get("duck_search_enabled", False):
@@ -462,21 +468,23 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
         response_text = await _handle_soc_extraction(response_text, bot, bot_config)
         response_text = resolve_custom_emoji(response_text, channel.guild)
 
-        # Tamagotchi: append stats footer only if there is visible text to send
-        tama_footer = build_tamagotchi_footer(bot_config)
-        if tama_footer and response_text.strip():
-            response_text = response_text.rstrip() + "\n" + tama_footer
+        # Tamagotchi: build button view if enabled
+        tama_view = None
+        if bot_config.get("tama_enabled", False) and tama_manager:
+            tama_view = TamagotchiView(bot_config, tama_manager)
 
         if audio_bytes:
             audio_file = discord.File(fp=io.BytesIO(audio_bytes), filename="chatbuddy_voice.wav")
             await channel.send(file=audio_file)
             chunks = chunk_message(response_text)
-            for chunk in chunks:
-                await channel.send(chunk)
+            for i, chunk in enumerate(chunks):
+                v = tama_view if (i == len(chunks) - 1 and tama_view) else None
+                await channel.send(chunk, view=v)
         else:
             chunks = chunk_message(response_text)
-            for chunk in chunks:
-                await channel.send(chunk)
+            for i, chunk in enumerate(chunks):
+                v = tama_view if (i == len(chunks) - 1 and tama_view) else None
+                await channel.send(chunk, view=v)
 
         if soul_logs and bot_config.get("soul_channel_enabled"):
             ch_id = bot_config.get("soul_channel_id")
@@ -1355,434 +1363,418 @@ async def set_heartbeat_cmd(
 
 
 # ---------------------------------------------------------------------------
-# Slash commands — Tamagotchi minigame
+# Slash commands — Tamagotchi (unified gamified system)
 # ---------------------------------------------------------------------------
 
-from tamagotchi import validate_rate, parse_emoji_list
 
-
-@bot.tree.command(name="set-tamagochi-mode", description="Enable or disable Tamagotchi mode")
+@bot.tree.command(name="set-tama-mode", description="Enable or disable Tamagotchi mode")
 @app_commands.describe(enabled="True to enable, False to disable")
 @app_commands.default_permissions(administrator=True)
-async def set_tamagochi_mode(interaction: discord.Interaction, enabled: bool):
-    if enabled and not bot_config.get("tamagotchi_rules_set", False):
-        await interaction.response.send_message(
-            "⚠️ Cannot enable Tamagotchi mode — rules have not been set yet.\n"
-            "Run `/set-tamagochi-rules` first to configure accepted emoji and stat limits.",
-            ephemeral=True,
-        )
-        return
-    bot_config["tamagotchi_enabled"] = enabled
+async def set_tama_mode(interaction: discord.Interaction, enabled: bool):
+    bot_config["tama_enabled"] = enabled
     save_config(bot_config)
+    if enabled and tama_manager:
+        tama_manager.start()
     state = "**enabled** 🐣" if enabled else "**disabled** 🚫"
+    await interaction.response.send_message(f"✅ Tamagotchi mode {state}.", ephemeral=True)
+
+
+@bot.tree.command(name="set-tama-hunger", description="Configure the hunger stat")
+@app_commands.describe(max="Maximum hunger value", depletion="Hunger lost per LLM turn")
+@app_commands.default_permissions(administrator=True)
+async def set_tama_hunger(interaction: discord.Interaction, max: int, depletion: float):
+    if max < 1:
+        await interaction.response.send_message("⚠️ Max must be at least 1.", ephemeral=True)
+        return
+    bot_config["tama_hunger_max"] = max
+    bot_config["tama_hunger_depletion"] = depletion
+    save_config(bot_config)
     await interaction.response.send_message(
-        f"✅ Tamagotchi mode {state}.", ephemeral=True
+        f"✅ Hunger: max **{max}**, depletion **{depletion}**/turn.", ephemeral=True
     )
 
 
-@bot.tree.command(name="set-tamagochi-rules", description="Set the Tamagotchi accepted emoji and stat limits")
+@bot.tree.command(name="set-tama-thirst", description="Configure the thirst stat")
+@app_commands.describe(max="Maximum thirst value", depletion="Thirst lost per LLM turn")
+@app_commands.default_permissions(administrator=True)
+async def set_tama_thirst(interaction: discord.Interaction, max: int, depletion: float):
+    if max < 1:
+        await interaction.response.send_message("⚠️ Max must be at least 1.", ephemeral=True)
+        return
+    bot_config["tama_thirst_max"] = max
+    bot_config["tama_thirst_depletion"] = depletion
+    save_config(bot_config)
+    await interaction.response.send_message(
+        f"✅ Thirst: max **{max}**, depletion **{depletion}**/turn.", ephemeral=True
+    )
+
+
+@bot.tree.command(name="set-tama-happiness", description="Configure the happiness stat")
+@app_commands.describe(max="Maximum happiness value", depletion="Happiness lost per LLM turn")
+@app_commands.default_permissions(administrator=True)
+async def set_tama_happiness(interaction: discord.Interaction, max: int, depletion: float):
+    if max < 1:
+        await interaction.response.send_message("⚠️ Max must be at least 1.", ephemeral=True)
+        return
+    bot_config["tama_happiness_max"] = max
+    bot_config["tama_happiness_depletion"] = depletion
+    save_config(bot_config)
+    await interaction.response.send_message(
+        f"✅ Happiness: max **{max}**, depletion **{depletion}**/turn.", ephemeral=True
+    )
+
+
+@bot.tree.command(name="set-tama-health", description="Configure the health stat")
 @app_commands.describe(
-    food_emoji="Accepted food emoji (e.g. 🍔🍕🍩)",
-    drink_emoji="Accepted drink emoji (e.g. 💧🥤☕)",
-    entertainment_emoji="Accepted entertainment emoji (e.g. 🎮🎲🎵)",
-    hunger="Maximum hunger stat value",
-    thirst="Maximum thirst stat value",
-    happiness="Maximum happiness stat value",
+    max="Maximum health value",
+    damage_per_stat="HP lost per stat below threshold each turn",
+    threshold="Stats below this value trigger HP damage",
 )
 @app_commands.default_permissions(administrator=True)
-async def set_tamagochi_rules(
+async def set_tama_health(interaction: discord.Interaction, max: int, damage_per_stat: float, threshold: float):
+    if max < 1:
+        await interaction.response.send_message("⚠️ Max must be at least 1.", ephemeral=True)
+        return
+    bot_config["tama_health_max"] = max
+    bot_config["tama_health_damage_per_stat"] = damage_per_stat
+    bot_config["tama_health_threshold"] = threshold
+    save_config(bot_config)
+    await interaction.response.send_message(
+        f"✅ Health: max **{max}**, **{damage_per_stat}** HP/stat below **{threshold}**.", ephemeral=True
+    )
+
+
+@bot.tree.command(name="set-tama-satiation", description="Configure the satiation system")
+@app_commands.describe(
+    max="Maximum satiation before timer starts",
+    timer="Cooldown in seconds when full (default 300 = 5min)",
+    food_inc="Satiation gained per feed button press",
+    drink_inc="Satiation gained per drink button press",
+    depletion="Satiation decrease per LLM turn",
+)
+@app_commands.default_permissions(administrator=True)
+async def set_tama_satiation(
     interaction: discord.Interaction,
-    food_emoji: str,
-    drink_emoji: str,
-    entertainment_emoji: str,
-    hunger: int,
-    thirst: int,
-    happiness: int,
+    max: int, timer: int, food_inc: float, drink_inc: float, depletion: float,
 ):
-    if hunger < 1 or thirst < 1 or happiness < 1:
-        await interaction.response.send_message(
-            "⚠️ All stat maximums must be at least 1.", ephemeral=True
-        )
+    if max < 1:
+        await interaction.response.send_message("⚠️ Max must be at least 1.", ephemeral=True)
         return
-
-    food_list = parse_emoji_list(food_emoji)
-    drink_list = parse_emoji_list(drink_emoji)
-    ent_list = parse_emoji_list(entertainment_emoji)
-
-    if not food_list and not drink_list and not ent_list:
-        await interaction.response.send_message(
-            "⚠️ No valid emoji detected. Please include at least one emoji in your input.",
-            ephemeral=True,
-        )
+    if timer < 1:
+        await interaction.response.send_message("⚠️ Timer must be at least 1 second.", ephemeral=True)
         return
-
-    bot_config["tamagotchi_food_emoji"] = food_list
-    bot_config["tamagotchi_drink_emoji"] = drink_list
-    bot_config["tamagotchi_entertainment_emoji"] = ent_list
-    bot_config["tamagotchi_max_hunger"] = hunger
-    bot_config["tamagotchi_max_thirst"] = thirst
-    bot_config["tamagotchi_max_happiness"] = happiness
-    # Reset current stats to max on rule setup
-    bot_config["tamagotchi_hunger"] = float(hunger)
-    bot_config["tamagotchi_thirst"] = float(thirst)
-    bot_config["tamagotchi_happiness"] = float(happiness)
-    bot_config["tamagotchi_rules_set"] = True
+    bot_config["tama_satiation_max"] = max
+    bot_config["tama_satiation_timer"] = timer
+    bot_config["tama_satiation_food_increase"] = food_inc
+    bot_config["tama_satiation_drink_increase"] = drink_inc
+    bot_config["tama_satiation_depletion"] = depletion
     save_config(bot_config)
-
     await interaction.response.send_message(
-        f"✅ Tamagotchi rules configured!\n"
-        f"• Food emoji: {' '.join(food_list) or '(none)'}\n"
-        f"• Drink emoji: {' '.join(drink_list) or '(none)'}\n"
-        f"• Entertainment emoji: {' '.join(ent_list) or '(none)'}\n"
-        f"• Hunger max: **{hunger}** | Thirst max: **{thirst}** | Happiness max: **{happiness}**\n"
-        f"• Current stats reset to max values.",
+        f"✅ Satiation: max **{max}**, timer **{timer}s**, "
+        f"food +**{food_inc}**, drink +**{drink_inc}**, depletion **{depletion}**/turn.",
         ephemeral=True,
     )
 
 
-@bot.tree.command(name="set-tamagochi-depletion-rate", description="Set how much each stat decreases per inference")
+@bot.tree.command(name="set-tama-energy", description="Configure the energy stat")
 @app_commands.describe(
-    food="Hunger depletion per inference (max 2 decimals, max 99)",
-    thirst="Thirst depletion per inference (max 2 decimals, max 99)",
-    happiness="Happiness depletion per inference (max 2 decimals, max 99)",
+    max="Maximum energy value",
+    api_depletion="Energy lost per LLM API call",
+    game_depletion="Energy lost per game played",
 )
 @app_commands.default_permissions(administrator=True)
-async def set_tamagochi_depletion_rate(
+async def set_tama_energy(interaction: discord.Interaction, max: int, api_depletion: float, game_depletion: float):
+    if max < 1:
+        await interaction.response.send_message("⚠️ Max must be at least 1.", ephemeral=True)
+        return
+    bot_config["tama_energy_max"] = max
+    bot_config["tama_energy_depletion_api"] = api_depletion
+    bot_config["tama_energy_depletion_game"] = game_depletion
+    save_config(bot_config)
+    await interaction.response.send_message(
+        f"✅ Energy: max **{max}**, API **-{api_depletion}**, game **-{game_depletion}**.", ephemeral=True
+    )
+
+
+@bot.tree.command(name="set-tama-dirt", description="Configure the dirtiness/poop system")
+@app_commands.describe(
+    max="Max poop count before cap",
+    food_threshold="Number of feed actions before +1 poop",
+    health_damage="HP lost per poop per damage interval",
+    interval="Seconds between poop damage ticks (default 600 = 10min)",
+)
+@app_commands.default_permissions(administrator=True)
+async def set_tama_dirt(
     interaction: discord.Interaction,
-    food: float,
-    thirst: float,
-    happiness: float,
+    max: int, food_threshold: int, health_damage: float, interval: int,
 ):
-    for name, val in [("food", food), ("thirst", thirst), ("happiness", happiness)]:
-        if not validate_rate(val):
-            await interaction.response.send_message(
-                f"⚠️ Invalid **{name}** rate: `{val}`. Must have at most 2 decimal places and be ≤ 99.",
-                ephemeral=True,
-            )
-            return
-    bot_config["tamagotchi_depletion_food"] = food
-    bot_config["tamagotchi_depletion_thirst"] = thirst
-    bot_config["tamagotchi_depletion_happiness"] = happiness
+    if max < 1:
+        await interaction.response.send_message("⚠️ Max must be at least 1.", ephemeral=True)
+        return
+    if food_threshold < 1:
+        await interaction.response.send_message("⚠️ Food threshold must be at least 1.", ephemeral=True)
+        return
+    if interval < 10:
+        await interaction.response.send_message("⚠️ Interval must be at least 10 seconds.", ephemeral=True)
+        return
+    bot_config["tama_dirt_max"] = max
+    bot_config["tama_dirt_food_threshold"] = food_threshold
+    bot_config["tama_dirt_health_damage"] = health_damage
+    bot_config["tama_dirt_damage_interval"] = interval
     save_config(bot_config)
+    # Restart dirt task with new interval
+    if tama_manager:
+        tama_manager._start_dirt_task()
     await interaction.response.send_message(
-        f"✅ Tamagotchi depletion rates set:\n"
-        f"• Hunger: **{food}**/turn | Thirst: **{thirst}**/turn | Happiness: **{happiness}**/turn",
+        f"✅ Dirtiness: max **{max}** 💩, poop every **{food_threshold}** feeds, "
+        f"**{health_damage}** HP/poop every **{interval}s**.",
         ephemeral=True,
     )
 
 
-@bot.tree.command(name="set-tamagochi-fill-rate", description="Set how much each stat increases per emoji consumed")
+@bot.tree.command(name="set-tama-sickness", description="Configure sickness damage")
+@app_commands.describe(health_damage="HP lost per LLM turn while sick")
+@app_commands.default_permissions(administrator=True)
+async def set_tama_sickness(interaction: discord.Interaction, health_damage: float):
+    bot_config["tama_sick_health_damage"] = health_damage
+    save_config(bot_config)
+    await interaction.response.send_message(
+        f"✅ Sickness damage: **{health_damage}** HP/turn while sick.", ephemeral=True
+    )
+
+
+@bot.tree.command(name="set-tama-feed", description="Configure the feed button")
+@app_commands.describe(amount="Hunger restored per feed", cooldown="Cooldown in seconds")
+@app_commands.default_permissions(administrator=True)
+async def set_tama_feed(interaction: discord.Interaction, amount: float, cooldown: int):
+    if cooldown < 0:
+        await interaction.response.send_message("⚠️ Cooldown must be ≥ 0.", ephemeral=True)
+        return
+    bot_config["tama_feed_amount"] = amount
+    bot_config["tama_cd_feed"] = cooldown
+    save_config(bot_config)
+    await interaction.response.send_message(
+        f"✅ Feed: +**{amount}** hunger, **{cooldown}s** cooldown.", ephemeral=True
+    )
+
+
+@bot.tree.command(name="set-tama-drink", description="Configure the drink button")
+@app_commands.describe(amount="Thirst restored per drink", cooldown="Cooldown in seconds")
+@app_commands.default_permissions(administrator=True)
+async def set_tama_drink(interaction: discord.Interaction, amount: float, cooldown: int):
+    if cooldown < 0:
+        await interaction.response.send_message("⚠️ Cooldown must be ≥ 0.", ephemeral=True)
+        return
+    bot_config["tama_drink_amount"] = amount
+    bot_config["tama_cd_drink"] = cooldown
+    save_config(bot_config)
+    await interaction.response.send_message(
+        f"✅ Drink: +**{amount}** thirst, **{cooldown}s** cooldown.", ephemeral=True
+    )
+
+
+@bot.tree.command(name="set-tama-play", description="Configure the play button")
 @app_commands.describe(
-    food="Hunger gained per food emoji (max 2 decimals, max 99, default 1)",
-    thirst="Thirst gained per drink emoji (max 2 decimals, max 99, default 1)",
-    happiness="Happiness gained per entertainment emoji (max 2 decimals, max 99, default 1)",
+    happiness="Happiness gained per play",
+    hunger_loss="Hunger lost per play",
+    thirst_loss="Thirst lost per play",
+    cooldown="Cooldown in seconds",
 )
 @app_commands.default_permissions(administrator=True)
-async def set_tamagochi_fill_rate(
+async def set_tama_play(
     interaction: discord.Interaction,
-    food: float,
-    thirst: float,
-    happiness: float,
+    happiness: float, hunger_loss: float, thirst_loss: float, cooldown: int,
 ):
-    for name, val in [("food", food), ("thirst", thirst), ("happiness", happiness)]:
-        if not validate_rate(val):
-            await interaction.response.send_message(
-                f"⚠️ Invalid **{name}** rate: `{val}`. Must have at most 2 decimal places and be ≤ 99.",
-                ephemeral=True,
-            )
-            return
-    bot_config["tamagotchi_fill_food"] = food
-    bot_config["tamagotchi_fill_thirst"] = thirst
-    bot_config["tamagotchi_fill_happiness"] = happiness
+    if cooldown < 0:
+        await interaction.response.send_message("⚠️ Cooldown must be ≥ 0.", ephemeral=True)
+        return
+    bot_config["tama_play_happiness"] = happiness
+    bot_config["tama_play_hunger_loss"] = hunger_loss
+    bot_config["tama_play_thirst_loss"] = thirst_loss
+    bot_config["tama_cd_play"] = cooldown
     save_config(bot_config)
     await interaction.response.send_message(
-        f"✅ Tamagotchi fill rates set:\n"
-        f"• Hunger: **{food}**/emoji | Thirst: **{thirst}**/emoji | Happiness: **{happiness}**/emoji",
+        f"✅ Play: +**{happiness}** 😊, -**{hunger_loss}** 🍔, -**{thirst_loss}** 🥤, **{cooldown}s** cd.",
         ephemeral=True,
     )
 
 
-@bot.tree.command(name="set-tamagochi-max-consumption", description="Limit how many emoji the bot can consume per input")
-@app_commands.describe(limit="Max emoji consumed per input (0 = unlimited, default 0)")
+@bot.tree.command(name="set-tama-medicate", description="Configure the medicate button")
+@app_commands.describe(cooldown="Cooldown in seconds")
 @app_commands.default_permissions(administrator=True)
-async def set_tamagochi_max_consumption(interaction: discord.Interaction, limit: int):
-    if limit < 0:
-        await interaction.response.send_message(
-            "⚠️ Limit must be 0 (unlimited) or a positive number.", ephemeral=True
-        )
+async def set_tama_medicate(interaction: discord.Interaction, cooldown: int):
+    if cooldown < 0:
+        await interaction.response.send_message("⚠️ Cooldown must be ≥ 0.", ephemeral=True)
         return
-    bot_config["tamagotchi_max_consumption"] = limit
-    save_config(bot_config)
-    desc = "**unlimited** (no cap)" if limit == 0 else f"**{limit}** emoji per input"
-    await interaction.response.send_message(
-        f"✅ Tamagotchi max consumption set to {desc}.", ephemeral=True
-    )
-
-
-@bot.tree.command(name="show-tamagochi-stats", description="Show current Tamagotchi stats and configuration")
-@app_commands.default_permissions(administrator=True)
-async def show_tamagochi_stats(interaction: discord.Interaction):
-    from tamagotchi import _format_stat
-    enabled = bot_config.get("tamagotchi_enabled", False)
-    rules_set = bot_config.get("tamagotchi_rules_set", False)
-
-    if not rules_set:
-        await interaction.response.send_message(
-            "⚠️ Tamagotchi rules have not been configured yet. Run `/set-tamagochi-rules` first.",
-            ephemeral=True,
-        )
-        return
-
-    hunger = bot_config.get("tamagotchi_hunger", 0)
-    thirst = bot_config.get("tamagotchi_thirst", 0)
-    happiness = bot_config.get("tamagotchi_happiness", 0)
-    max_h = bot_config.get("tamagotchi_max_hunger", 10)
-    max_t = bot_config.get("tamagotchi_max_thirst", 10)
-    max_hp = bot_config.get("tamagotchi_max_happiness", 10)
-
-    food_emoji = " ".join(bot_config.get("tamagotchi_food_emoji", []))
-    drink_emoji = " ".join(bot_config.get("tamagotchi_drink_emoji", []))
-    ent_emoji = " ".join(bot_config.get("tamagotchi_entertainment_emoji", []))
-
-    dep_f = bot_config.get("tamagotchi_depletion_food", 1.0)
-    dep_t = bot_config.get("tamagotchi_depletion_thirst", 1.0)
-    dep_h = bot_config.get("tamagotchi_depletion_happiness", 1.0)
-    fill_f = bot_config.get("tamagotchi_fill_food", 1.0)
-    fill_t = bot_config.get("tamagotchi_fill_thirst", 1.0)
-    fill_h = bot_config.get("tamagotchi_fill_happiness", 1.0)
-    max_cons = bot_config.get("tamagotchi_max_consumption", 0)
-
-    state = "✅ Enabled" if enabled else "❌ Disabled"
-    cons_desc = "Unlimited" if max_cons == 0 else str(max_cons)
-
-    msg = (
-        f"🐣 **Tamagotchi Status** — {state}\n\n"
-        f"**Current Stats:**\n"
-        f"• 🍔 Hunger: {_format_stat(hunger)}/{max_h}\n"
-        f"• 💧 Thirst: {_format_stat(thirst)}/{max_t}\n"
-        f"• 😊 Happiness: {_format_stat(happiness)}/{max_hp}\n"
-    )
-
-    # Hardcore sickness section
-    if bot_config.get("tamagotchi_hardcore_enabled", False):
-        sickness = bot_config.get("tamagotchi_sickness", 0)
-        max_s = bot_config.get("tamagotchi_max_sickness", 10)
-        med_emoji = " ".join(bot_config.get("tamagotchi_medicine_emoji", []))
-        med_heal = bot_config.get("tamagotchi_medicine_heal", 1.0)
-        thresh_f = bot_config.get("tamagotchi_sickness_threshold_food", 2.0)
-        thresh_t = bot_config.get("tamagotchi_sickness_threshold_thirst", 2.0)
-        thresh_hp = bot_config.get("tamagotchi_sickness_threshold_happiness", 2.0)
-        inc_f = bot_config.get("tamagotchi_sickness_increase_food", 1.0)
-        inc_t = bot_config.get("tamagotchi_sickness_increase_thirst", 1.0)
-        inc_hp = bot_config.get("tamagotchi_sickness_increase_happiness", 1.0)
-        msg += (
-            f"• 🤒 Sickness: {_format_stat(sickness)}/{max_s} **(HARDCORE)**\n\n"
-            f"**Hardcore Settings:**\n"
-            f"• Medicine emoji: {med_emoji or '(none)'} — heals **{med_heal}**/emoji\n"
-            f"• Sickness thresholds: 🍔 <{thresh_f} | 💧 <{thresh_t} | 😊 <{thresh_hp}\n"
-            f"• Sickness increase: 🍔 +{inc_f} | 💧 +{inc_t} | 😊 +{inc_hp}\n"
-        )
-        rip_msg = bot_config.get("tamagotchi_rip_message", "").strip()
-        msg += f"• Death message: {rip_msg or '(default)'}\n"
-    else:
-        msg += "\n"
-
-    msg += (
-        f"**Accepted Emoji:**\n"
-        f"• Food: {food_emoji or '(none)'}\n"
-        f"• Drink: {drink_emoji or '(none)'}\n"
-        f"• Entertainment: {ent_emoji or '(none)'}\n\n"
-        f"**Rates:**\n"
-        f"• Depletion: 🍔 {dep_f}/turn | 💧 {dep_t}/turn | 😊 {dep_h}/turn\n"
-        f"• Fill: 🍔 {fill_f}/emoji | 💧 {fill_t}/emoji | 😊 {fill_h}/emoji\n"
-        f"• Max consumption: {cons_desc}"
-    )
-
-    await interaction.response.send_message(msg, ephemeral=True)
-
-
-# ---------------------------------------------------------------------------
-# Slash commands — Tamagotchi hardcore mode
-# ---------------------------------------------------------------------------
-
-
-@bot.tree.command(name="set-hardcore-tamagochi-mode", description="Enable or disable hardcore Tamagotchi mode (sickness + death)")
-@app_commands.describe(enabled="True to enable, False to disable")
-@app_commands.default_permissions(administrator=True)
-async def set_hardcore_tamagochi_mode(interaction: discord.Interaction, enabled: bool):
-    if enabled:
-        # Check that core tamagotchi mode is enabled
-        if not bot_config.get("tamagotchi_enabled", False):
-            await interaction.response.send_message(
-                "⚠️ Cannot enable hardcore mode — base Tamagotchi mode is not enabled.\n"
-                "Run `/set-tamagochi-mode true` first.",
-                ephemeral=True,
-            )
-            return
-
-        # Check all hardcore settings are configured
-        missing = []
-        if bot_config.get("tamagotchi_max_sickness", 10) == 10 and not bot_config.get("_hc_sickness_set", False):
-            missing.append("`/set-hardcore-sickness-stat` — max sickness value")
-        if not bot_config.get("tamagotchi_medicine_emoji", []):
-            missing.append("`/set-hardcore-tamagochi-medicine` — medicine emoji + heal amount")
-        if not bot_config.get("_hc_threshold_set", False):
-            missing.append("`/set-hc-sick-threshold` — sickness thresholds")
-        if not bot_config.get("_hc_increase_set", False):
-            missing.append("`/set-hc-sick-increase` — sickness increase rates")
-
-        if missing:
-            missing_text = "\n".join(f"• {m}" for m in missing)
-            await interaction.response.send_message(
-                f"⚠️ Cannot enable hardcore mode — the following settings are missing:\n{missing_text}",
-                ephemeral=True,
-            )
-            return
-
-        bot_config["tamagotchi_hardcore_enabled"] = True
-        bot_config["tamagotchi_hardcore_rules_set"] = True
-        save_config(bot_config)
-        await interaction.response.send_message(
-            "✅ Hardcore Tamagotchi mode **enabled** 💀. Sickness is now active!",
-            ephemeral=True,
-        )
-    else:
-        # Disabling resets sickness to 0
-        bot_config["tamagotchi_hardcore_enabled"] = False
-        bot_config["tamagotchi_sickness"] = 0.0
-        save_config(bot_config)
-        await interaction.response.send_message(
-            "✅ Hardcore Tamagotchi mode **disabled**. Sickness has been reset to 0.",
-            ephemeral=True,
-        )
-
-
-@bot.tree.command(name="set-hardcore-sickness-stat", description="Set the max sickness value (death threshold)")
-@app_commands.describe(max_sickness="Maximum sickness before death (max 2 decimals, max 99)")
-@app_commands.default_permissions(administrator=True)
-async def set_hardcore_sickness_stat(interaction: discord.Interaction, max_sickness: float):
-    if not validate_rate(max_sickness) or max_sickness <= 0:
-        await interaction.response.send_message(
-            f"⚠️ Invalid value: `{max_sickness}`. Must be > 0, at most 2 decimal places, and ≤ 99.",
-            ephemeral=True,
-        )
-        return
-    bot_config["tamagotchi_max_sickness"] = max_sickness
-    bot_config["_hc_sickness_set"] = True
+    bot_config["tama_cd_medicate"] = cooldown
     save_config(bot_config)
     await interaction.response.send_message(
-        f"✅ Max sickness set to **{max_sickness}**. The Tamagotchi dies when sickness reaches this.",
-        ephemeral=True,
+        f"✅ Medicate cooldown: **{cooldown}s**.", ephemeral=True
     )
 
 
-@bot.tree.command(name="set-hardcore-tamagochi-medicine", description="Set medicine emoji and heal amount")
-@app_commands.describe(
-    emoji="Emoji that count as medicine (e.g. 💊🩹)",
-    heal_amount="How much sickness decreases per medicine emoji (max 2 decimals, max 99)",
-)
+@bot.tree.command(name="set-tama-clean", description="Configure the clean button")
+@app_commands.describe(cooldown="Cooldown in seconds")
 @app_commands.default_permissions(administrator=True)
-async def set_hardcore_tamagochi_medicine(
-    interaction: discord.Interaction, emoji: str, heal_amount: float
-):
-    if not validate_rate(heal_amount) or heal_amount <= 0:
-        await interaction.response.send_message(
-            f"⚠️ Invalid heal amount: `{heal_amount}`. Must be > 0, at most 2 decimal places, and ≤ 99.",
-            ephemeral=True,
-        )
+async def set_tama_clean(interaction: discord.Interaction, cooldown: int):
+    if cooldown < 0:
+        await interaction.response.send_message("⚠️ Cooldown must be ≥ 0.", ephemeral=True)
         return
-    med_list = parse_emoji_list(emoji)
-    if not med_list:
-        await interaction.response.send_message(
-            "⚠️ No valid emoji detected. Please include at least one emoji.",
-            ephemeral=True,
-        )
-        return
-    bot_config["tamagotchi_medicine_emoji"] = med_list
-    bot_config["tamagotchi_medicine_heal"] = heal_amount
+    bot_config["tama_cd_clean"] = cooldown
     save_config(bot_config)
     await interaction.response.send_message(
-        f"✅ Medicine configured:\n"
-        f"• Emoji: {' '.join(med_list)}\n"
-        f"• Heal amount: **{heal_amount}** per emoji",
-        ephemeral=True,
+        f"✅ Clean cooldown: **{cooldown}s**.", ephemeral=True
     )
 
 
-@bot.tree.command(name="set-hc-sick-threshold", description="Set stat thresholds below which sickness increases")
-@app_commands.describe(
-    food="Sickness increases when hunger drops below this value",
-    thirst="Sickness increases when thirst drops below this value",
-    happiness="Sickness increases when happiness drops below this value",
-)
+@bot.tree.command(name="set-tama-rip-message", description="Set the death message (empty = default)")
+@app_commands.describe(message="Custom death message text")
 @app_commands.default_permissions(administrator=True)
-async def set_hardcore_tamagochi_sickness_threshold(
-    interaction: discord.Interaction, food: float, thirst: float, happiness: float
-):
-    for name, val in [("food", food), ("thirst", thirst), ("happiness", happiness)]:
-        if val < 0:
-            await interaction.response.send_message(
-                f"⚠️ Invalid **{name}** threshold: `{val}`. Must be ≥ 0.",
-                ephemeral=True,
-            )
-            return
-    bot_config["tamagotchi_sickness_threshold_food"] = food
-    bot_config["tamagotchi_sickness_threshold_thirst"] = thirst
-    bot_config["tamagotchi_sickness_threshold_happiness"] = happiness
-    bot_config["_hc_threshold_set"] = True
-    save_config(bot_config)
-    await interaction.response.send_message(
-        f"✅ Sickness thresholds set:\n"
-        f"• Sickness increases when: 🍔 Hunger < **{food}** | 💧 Thirst < **{thirst}** | 😊 Happiness < **{happiness}**",
-        ephemeral=True,
-    )
-
-
-@bot.tree.command(name="set-hc-sick-increase", description="Set how much sickness increases per turn when below threshold")
-@app_commands.describe(
-    food="Sickness added per turn when hunger is below threshold (max 2 decimals, max 99)",
-    thirst="Sickness added per turn when thirst is below threshold (max 2 decimals, max 99)",
-    happiness="Sickness added per turn when happiness is below threshold (max 2 decimals, max 99)",
-)
-@app_commands.default_permissions(administrator=True)
-async def set_hardcore_tamagochi_sickness_increase(
-    interaction: discord.Interaction, food: float, thirst: float, happiness: float
-):
-    for name, val in [("food", food), ("thirst", thirst), ("happiness", happiness)]:
-        if not validate_rate(val):
-            await interaction.response.send_message(
-                f"⚠️ Invalid **{name}** rate: `{val}`. Must have at most 2 decimal places and be ≤ 99.",
-                ephemeral=True,
-            )
-            return
-    bot_config["tamagotchi_sickness_increase_food"] = food
-    bot_config["tamagotchi_sickness_increase_thirst"] = thirst
-    bot_config["tamagotchi_sickness_increase_happiness"] = happiness
-    bot_config["_hc_increase_set"] = True
-    save_config(bot_config)
-    await interaction.response.send_message(
-        f"✅ Sickness increase rates set:\n"
-        f"• 🍔 +**{food}**/turn | 💧 +**{thirst}**/turn | 😊 +**{happiness}**/turn",
-        ephemeral=True,
-    )
-
-
-@bot.tree.command(name="set-tamagochi-rip-message", description="Set the custom death message shown when the Tamagotchi dies")
-@app_commands.describe(message="The message to display when the Tamagotchi dies (leave empty to use default)")
-@app_commands.default_permissions(administrator=True)
-async def set_tamagochi_rip_message(interaction: discord.Interaction, message: str):
-    bot_config["tamagotchi_rip_message"] = message.strip()
+async def set_tama_rip_message(interaction: discord.Interaction, message: str):
+    bot_config["tama_rip_message"] = message.strip()
     save_config(bot_config)
     if message.strip():
         await interaction.response.send_message(
-            f"✅ Custom death message set:\n{message.strip()}",
-            ephemeral=True,
+            f"✅ Death message set:\n{message.strip()}", ephemeral=True
         )
     else:
-        await interaction.response.send_message(
-            "✅ Death message reset to default.",
-            ephemeral=True,
-        )
+        await interaction.response.send_message("✅ Death message reset to default.", ephemeral=True)
+
+
+# ── Response message commands ──
+
+@bot.tree.command(name="set-resp-food", description="Set the response message for feeding")
+@app_commands.describe(message="Message shown when someone feeds the bot")
+@app_commands.default_permissions(administrator=True)
+async def set_resp_food(interaction: discord.Interaction, message: str):
+    bot_config["tama_resp_feed"] = message
+    save_config(bot_config)
+    await interaction.response.send_message(f"✅ Feed response set.", ephemeral=True)
+
+
+@bot.tree.command(name="set-resp-drink", description="Set the response message for drinking")
+@app_commands.describe(message="Message shown when someone gives a drink")
+@app_commands.default_permissions(administrator=True)
+async def set_resp_drink(interaction: discord.Interaction, message: str):
+    bot_config["tama_resp_drink"] = message
+    save_config(bot_config)
+    await interaction.response.send_message(f"✅ Drink response set.", ephemeral=True)
+
+
+@bot.tree.command(name="set-resp-play", description="Set the response message for playing")
+@app_commands.describe(message="Message shown when starting a play session")
+@app_commands.default_permissions(administrator=True)
+async def set_resp_play(interaction: discord.Interaction, message: str):
+    bot_config["tama_resp_play"] = message
+    save_config(bot_config)
+    await interaction.response.send_message(f"✅ Play response set.", ephemeral=True)
+
+
+@bot.tree.command(name="set-resp-medicate", description="Set the response message for medicating")
+@app_commands.describe(message="Message shown when medication is given")
+@app_commands.default_permissions(administrator=True)
+async def set_resp_medicate(interaction: discord.Interaction, message: str):
+    bot_config["tama_resp_medicate"] = message
+    save_config(bot_config)
+    await interaction.response.send_message(f"✅ Medicate response set.", ephemeral=True)
+
+
+@bot.tree.command(name="set-resp-medicate-healthy", description="Set the error message when medicating but not sick")
+@app_commands.describe(message="Ephemeral message shown when trying to medicate a healthy bot")
+@app_commands.default_permissions(administrator=True)
+async def set_resp_medicate_healthy(interaction: discord.Interaction, message: str):
+    bot_config["tama_resp_medicate_healthy"] = message
+    save_config(bot_config)
+    await interaction.response.send_message(f"✅ Medicate-healthy response set.", ephemeral=True)
+
+
+@bot.tree.command(name="set-resp-clean", description="Set the response message for cleaning")
+@app_commands.describe(message="Message shown when cleaning poop")
+@app_commands.default_permissions(administrator=True)
+async def set_resp_clean(interaction: discord.Interaction, message: str):
+    bot_config["tama_resp_clean"] = message
+    save_config(bot_config)
+    await interaction.response.send_message(f"✅ Clean response set.", ephemeral=True)
+
+
+@bot.tree.command(name="set-resp-clean-none", description="Set the error message when cleaning but already clean")
+@app_commands.describe(message="Ephemeral message shown when there's nothing to clean")
+@app_commands.default_permissions(administrator=True)
+async def set_resp_clean_none(interaction: discord.Interaction, message: str):
+    bot_config["tama_resp_clean_none"] = message
+    save_config(bot_config)
+    await interaction.response.send_message(f"✅ Clean-none response set.", ephemeral=True)
+
+
+@bot.tree.command(name="set-resp-full", description="Set the error message when the bot is satiated")
+@app_commands.describe(message="Ephemeral message shown when trying to feed/drink a full bot")
+@app_commands.default_permissions(administrator=True)
+async def set_resp_full(interaction: discord.Interaction, message: str):
+    bot_config["tama_resp_full"] = message
+    save_config(bot_config)
+    await interaction.response.send_message(f"✅ Satiation error response set.", ephemeral=True)
+
+
+@bot.tree.command(name="set-resp-cooldown", description="Set the cooldown error message (use {time} placeholder)")
+@app_commands.describe(message="Message shown on cooldown. Use {time} for countdown.")
+@app_commands.default_permissions(administrator=True)
+async def set_resp_cooldown(interaction: discord.Interaction, message: str):
+    bot_config["tama_resp_cooldown"] = message
+    save_config(bot_config)
+    await interaction.response.send_message(f"✅ Cooldown response set.", ephemeral=True)
+
+
+# ── Debug / admin ──
+
+@bot.tree.command(name="show-tama-stats", description="View all current Tamagotchi stats and config")
+@app_commands.default_permissions(administrator=True)
+async def show_tama_stats(interaction: discord.Interaction):
+    from tamagotchi import _fs
+    c = bot_config
+
+    enabled = "✅ Enabled" if c.get("tama_enabled", False) else "❌ Disabled"
+    sick = "**YES** 💀" if c.get("tama_sick", False) else "No"
+
+    msg = (
+        f"🐣 **Tamagotchi Status** — {enabled}\n\n"
+        f"**Stats:**\n"
+        f"• 🍔 Hunger: {_fs(c.get('tama_hunger', 0))}/{c.get('tama_hunger_max', 10)}"
+        f"  (−{c.get('tama_hunger_depletion', 0.2)}/turn)\n"
+        f"• 🥤 Thirst: {_fs(c.get('tama_thirst', 0))}/{c.get('tama_thirst_max', 10)}"
+        f"  (−{c.get('tama_thirst_depletion', 0.3)}/turn)\n"
+        f"• 😊 Happiness: {_fs(c.get('tama_happiness', 0))}/{c.get('tama_happiness_max', 10)}"
+        f"  (−{c.get('tama_happiness_depletion', 0.1)}/turn)\n"
+        f"• ❤️ Health: {_fs(c.get('tama_health', 0))}/{c.get('tama_health_max', 10)}"
+        f"  (threshold: {c.get('tama_health_threshold', 2.0)}, dmg/stat: {c.get('tama_health_damage_per_stat', 1.0)})\n"
+        f"• 🤰 Satiation: {_fs(c.get('tama_satiation', 0))}/{c.get('tama_satiation_max', 10)}"
+        f"  (timer: {c.get('tama_satiation_timer', 300)}s)\n"
+        f"• ⚡ Energy: {_fs(c.get('tama_energy', 0))}/{c.get('tama_energy_max', 10)}"
+        f"  (API: −{c.get('tama_energy_depletion_api', 0.1)}, game: −{c.get('tama_energy_depletion_game', 0.2)})\n"
+        f"• 💩 Dirt: {c.get('tama_dirt', 0)}/{c.get('tama_dirt_max', 4)}"
+        f"  (+1 every {c.get('tama_dirt_food_threshold', 10)} feeds, counter: {c.get('tama_dirt_food_counter', 0)})\n"
+        f"• 💀 Sick: {sick} (dmg: {c.get('tama_sick_health_damage', 0.5)}/turn)\n\n"
+        f"**Button Cooldowns:**\n"
+        f"• Feed: {c.get('tama_cd_feed', 60)}s | Drink: {c.get('tama_cd_drink', 60)}s | "
+        f"Play: {c.get('tama_cd_play', 60)}s | Medicate: {c.get('tama_cd_medicate', 60)}s | "
+        f"Clean: {c.get('tama_cd_clean', 60)}s"
+    )
+    await interaction.response.send_message(msg, ephemeral=True)
+
+
+@bot.tree.command(name="reset-tama-stats", description="Reset all Tamagotchi stats to their max values")
+@app_commands.default_permissions(administrator=True)
+async def reset_tama_stats(interaction: discord.Interaction):
+    bot_config["tama_hunger"] = float(bot_config.get("tama_hunger_max", 10))
+    bot_config["tama_thirst"] = float(bot_config.get("tama_thirst_max", 10))
+    bot_config["tama_happiness"] = float(bot_config.get("tama_happiness_max", 10))
+    bot_config["tama_health"] = float(bot_config.get("tama_health_max", 10))
+    bot_config["tama_energy"] = float(bot_config.get("tama_energy_max", 10))
+    bot_config["tama_satiation"] = 0.0
+    bot_config["tama_dirt"] = 0
+    bot_config["tama_dirt_food_counter"] = 0
+    bot_config["tama_sick"] = False
+    save_config(bot_config)
+    await interaction.response.send_message("✅ All Tamagotchi stats reset to max.", ephemeral=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2047,35 +2039,22 @@ async def help_command(interaction: discord.Interaction):
     )
 
     embed.add_field(
-        name="🐣 Tamagotchi Minigame",
+        name="🐣 Tamagotchi",
         value=(
-            "`/set-tamagochi-rules` — Set accepted food/drink/entertainment emoji + stat limits\n"
-            "`/set-tamagochi-mode` — Enable/disable Tamagotchi mode (rules must be set first)\n"
-            "`/set-tamagochi-depletion-rate` — Set how much stats decrease per inference\n"
-            "`/set-tamagochi-fill-rate` — Set how much stats increase per emoji consumed\n"
-            "`/set-tamagochi-max-consumption` — Limit emoji consumed per input (0 = unlimited)\n"
-            "`/show-tamagochi-stats` — View current stats, emoji, and rates\n\n"
-            "Stats deplete on every bot inference. Users feed the bot by including "
-            "accepted emoji in their messages. A stats footer is appended to every "
-            "visible response."
-        ),
-        inline=False,
-    )
-
-    embed.add_field(
-        name="💀 Tamagotchi Hardcore Mode",
-        value=(
-            "`/set-hardcore-sickness-stat` — Set max sickness (death threshold)\n"
-            "`/set-hardcore-tamagochi-medicine` — Set medicine emoji + heal amount\n"
-            "`/set-hc-sick-threshold` — Set thresholds below which sickness increases\n"
-            "`/set-hc-sick-increase` — Set sickness increase per turn per stat\n"
-            "`/set-tamagochi-rip-message` — Set custom death message (empty = default)\n"
-            "`/set-hardcore-tamagochi-mode` — Enable/disable hardcore (all settings must be configured)\n\n"
-            "When stats drop below their thresholds, sickness increases each turn. "
-            "Medicine emoji reduce sickness. If sickness reaches max → the Tamagotchi "
-            "dies, wiping soul memory, resetting stats, sending `[ce]` to all channels "
-            "(including SoC) to wipe context, and posting the death message. "
-            "Disabling resets sickness to 0."
+            "**Stats:** `/set-tama-hunger` `/set-tama-thirst` `/set-tama-happiness` "
+            "`/set-tama-health` `/set-tama-satiation` `/set-tama-energy` `/set-tama-dirt` "
+            "`/set-tama-sickness`\n"
+            "**Buttons:** `/set-tama-feed` `/set-tama-drink` `/set-tama-play` "
+            "`/set-tama-medicate` `/set-tama-clean`\n"
+            "**Responses:** `/set-resp-food` `/set-resp-drink` `/set-resp-play` "
+            "`/set-resp-medicate` `/set-resp-medicate-healthy` `/set-resp-clean` "
+            "`/set-resp-clean-none` `/set-resp-full` `/set-resp-cooldown`\n"
+            "`/set-tama-rip-message` — Custom death message\n"
+            "`/set-tama-mode` — Enable/disable\n"
+            "`/show-tama-stats` — View all stats & config\n"
+            "`/reset-tama-stats` — Reset all stats to max\n\n"
+            "Stats deplete per inference. Interact via buttons (Feed, Drink, Play, "
+            "Medicate, Clean). RPS minigame on Play. Death wipes soul & sends `[ce]`."
         ),
         inline=False,
     )

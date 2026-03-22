@@ -114,7 +114,7 @@ def build_system_prompt(config: dict, *, include_word_game: bool = True) -> str:
         parts.append(api_text)
 
     # Inject Tamagotchi status
-    if config.get("tamagotchi_enabled", False):
+    if config.get("tama_enabled", False):
         from tamagotchi import build_tamagotchi_system_prompt
         tama_prompt = build_tamagotchi_system_prompt(config)
         if tama_prompt:
