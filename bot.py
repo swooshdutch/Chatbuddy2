@@ -161,12 +161,14 @@ async def _deny_command(interaction: discord.Interaction) -> None:
         await interaction.response.send_message("You are not allowed to use bot setup commands.", ephemeral=True)
 
 
-@bot.tree.check
 async def _command_access_check(interaction: discord.Interaction) -> bool:
     if _is_allowed_command_user(interaction.user.id):
         return True
     await _deny_command(interaction)
     return False
+
+
+bot.tree.interaction_check = _command_access_check
 
 # ---------------------------------------------------------------------------
 # Events
