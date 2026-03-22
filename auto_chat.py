@@ -12,6 +12,7 @@ from discord.ext import tasks
 from config import save_config
 from gemini_api import generate, build_system_prompt
 from utils import format_context, chunk_message, resolve_custom_emoji, extract_thoughts, extract_reminder_commands
+from tamagotchi import TamagotchiView, is_sleeping
 
 
 class AutoChatManager:
@@ -80,6 +81,8 @@ class AutoChatManager:
         if not self.config.get("auto_chat_enabled"):
             return
         if self._idle:
+            return
+        if self.config.get("tama_enabled", False) and is_sleeping(self.config):
             return
 
         channel_id = self.config.get("auto_chat_channel_id")
@@ -164,11 +167,6 @@ class AutoChatManager:
                                 + "\n[END YOUR PREVIOUS THOUGHTS]\n"
                             )
 
-                # Tamagotchi: consume emoji from the user's message
-                if self.config.get("tamagotchi_enabled", False):
-                    from tamagotchi import consume_emoji
-                    consume_emoji(last_msg.content, self.config)
-
                 response_text, audio_bytes, soul_logs, reminder_cmds = await generate(
                     prompt=last_msg.clean_content or "(empty message)",
                     context=context,
@@ -179,7 +177,7 @@ class AutoChatManager:
 
                 # Tamagotchi: deplete stats after inference (no emoji consumption — bot-initiated)
                 is_dead = False
-                if self.config.get("tamagotchi_enabled", False):
+                if self.config.get("tama_enabled", False):
                     from tamagotchi import deplete_stats, broadcast_death
                     death_msg = deplete_stats(self.config)
                     if death_msg:
@@ -209,14 +207,13 @@ class AutoChatManager:
                     await channel.send(file=audio_file)
 
                 if response_text:
-                    # Tamagotchi: append stats footer only if there is visible text
-                    if self.config.get("tamagotchi_enabled", False):
-                        from tamagotchi import build_tamagotchi_footer
-                        tama_footer = build_tamagotchi_footer(self.config)
-                        if tama_footer and response_text.strip():
-                            response_text = response_text.rstrip() + "\n" + tama_footer
-                    for chunk in chunk_message(response_text):
-                        await channel.send(chunk)
+                    tama_view = None
+                    tama_manager = getattr(self.bot, "tama_manager", None)
+                    if self.config.get("tama_enabled", False) and tama_manager:
+                        tama_view = TamagotchiView(self.config, tama_manager)
+                    chunks = chunk_message(response_text)
+                    for i, chunk in enumerate(chunks):
+                        await channel.send(chunk, view=tama_view if i == len(chunks) - 1 else None)
 
                 # Send soul logs to configured channel if present
                 if soul_logs and self.config.get("soul_channel_enabled"):

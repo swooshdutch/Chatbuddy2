@@ -13,6 +13,7 @@ from discord.ext import tasks
 from config import save_config
 from gemini_api import generate
 from utils import format_context, chunk_message, resolve_custom_emoji, extract_thoughts, extract_reminder_commands
+from tamagotchi import TamagotchiView, is_sleeping
 
 
 class RevivalManager:
@@ -62,6 +63,8 @@ class RevivalManager:
 
         # If revival is disabled, do nothing
         if not revival.get("enabled", True):
+            return
+        if self.config.get("tama_enabled", False) and is_sleeping(self.config):
             return
 
         channel_id = int(revival["channel_id"])
@@ -139,7 +142,7 @@ class RevivalManager:
 
         # Tamagotchi: deplete stats after inference (no emoji consumption — bot-initiated)
         is_dead = False
-        if self.config.get("tamagotchi_enabled", False):
+        if self.config.get("tama_enabled", False):
             from tamagotchi import deplete_stats, broadcast_death
             death_msg = deplete_stats(self.config)
             if death_msg:
@@ -169,17 +172,16 @@ class RevivalManager:
 
             response_text = resolve_custom_emoji(response_text, channel.guild)
             # Tamagotchi: append stats footer if there is visible text
-            if self.config.get("tamagotchi_enabled", False):
-                from tamagotchi import build_tamagotchi_footer
-                tama_footer = build_tamagotchi_footer(self.config)
-                if tama_footer and response_text.strip():
-                    response_text = response_text.rstrip() + "\n" + tama_footer
             footer = f"\n-# :loudspeaker: chat reviver active for : {active_minutes}m 0s"
             chunks = chunk_message(response_text)
             # Append the footer to the last chunk
             chunks[-1] += footer
-            for chunk in chunks:
-                await channel.send(chunk)
+            tama_view = None
+            tama_manager = getattr(self.bot, "tama_manager", None)
+            if self.config.get("tama_enabled", False) and tama_manager:
+                tama_view = TamagotchiView(self.config, tama_manager)
+            for i, chunk in enumerate(chunks):
+                await channel.send(chunk, view=tama_view if i == len(chunks) - 1 else None)
 
         # Log soul changes
         if soul_logs and self.config.get("soul_channel_enabled"):
@@ -228,6 +230,8 @@ class RevivalManager:
             revival = self.config.get("chat_revival")
             if not revival or not revival.get("enabled", True):
                 break
+            if self.config.get("tama_enabled", False) and is_sleeping(self.config):
+                continue
 
             # Calculate remaining time for the footer (e.g. "4m 26s")
             remaining_total = max(total_seconds - elapsed, 0)
@@ -298,7 +302,7 @@ class RevivalManager:
 
                 # Tamagotchi: deplete stats after inference (no emoji consumption — bot-initiated)
                 is_dead = False
-                if self.config.get("tamagotchi_enabled", False):
+                if self.config.get("tama_enabled", False):
                     from tamagotchi import deplete_stats, broadcast_death
                     death_msg = deplete_stats(self.config)
                     if death_msg:
@@ -328,16 +332,15 @@ class RevivalManager:
 
                     response_text = resolve_custom_emoji(response_text, channel.guild)
                     # Tamagotchi: append stats footer if there is visible text
-                    if self.config.get("tamagotchi_enabled", False):
-                        from tamagotchi import build_tamagotchi_footer
-                        tama_footer = build_tamagotchi_footer(self.config)
-                        if tama_footer and response_text.strip():
-                            response_text = response_text.rstrip() + "\n" + tama_footer
                     footer = f"\n-# :loudspeaker: chat reviver active for : {remaining_m}m {remaining_s}s"
                     chunks = chunk_message(response_text)
                     chunks[-1] += footer
-                    for chunk in chunks:
-                        await channel.send(chunk)
+                    tama_view = None
+                    tama_manager = getattr(self.bot, "tama_manager", None)
+                    if self.config.get("tama_enabled", False) and tama_manager:
+                        tama_view = TamagotchiView(self.config, tama_manager)
+                    for i, chunk in enumerate(chunks):
+                        await channel.send(chunk, view=tama_view if i == len(chunks) - 1 else None)
 
                 # Log soul changes
                 if soul_logs and self.config.get("soul_channel_enabled"):

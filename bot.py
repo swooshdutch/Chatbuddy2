@@ -25,6 +25,7 @@ from heartbeat import HeartbeatManager
 from tamagotchi import (
     deplete_stats, broadcast_death,
     TamagotchiManager, TamagotchiView,
+    build_sleeping_message, is_sleeping,
 )
 
 # ---------------------------------------------------------------------------
@@ -117,6 +118,12 @@ async def _handle_soc_extraction(response_text: str, bot_ref, config: dict) -> s
                 await thought_channel.send(chunk)
     return clean_text
 
+
+def _build_tama_view():
+    if bot_config.get("tama_enabled", False) and tama_manager:
+        return TamagotchiView(bot_config, tama_manager)
+    return None
+
 # ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
@@ -140,6 +147,7 @@ async def on_ready():
 
     tama_manager = TamagotchiManager(bot, bot_config)
     tama_manager.start()
+    bot.tama_manager = tama_manager
 
     try:
         synced = await bot.tree.sync()
@@ -234,6 +242,14 @@ async def on_message(message: discord.Message):
 
 async def _generate_and_respond(message: discord.Message):
     """Handle a single mention/reply — the normal response flow."""
+    if bot_config.get("tama_enabled", False) and is_sleeping(bot_config):
+        await message.reply(
+            build_sleeping_message(bot_config),
+            mention_author=False,
+            view=_build_tama_view(),
+        )
+        return
+
     async with message.channel.typing():
         user_text = strip_mention(message.content, bot.user.id)
         if not user_text:
@@ -327,9 +343,7 @@ async def _generate_and_respond(message: discord.Message):
         response_text = resolve_custom_emoji(response_text, message.guild)
 
         # Tamagotchi: build button view if enabled
-        tama_view = None
-        if bot_config.get("tama_enabled", False) and tama_manager:
-            tama_view = TamagotchiView(bot_config, tama_manager)
+        tama_view = _build_tama_view()
 
         if audio_bytes:
             audio_file = discord.File(fp=io.BytesIO(audio_bytes), filename="chatbuddy_voice.wav")
@@ -368,6 +382,10 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
     Process a batch of messages that arrived during generation.
     Formats them as a single chatlog input and generates one response.
     """
+    if bot_config.get("tama_enabled", False) and is_sleeping(bot_config):
+        await channel.send(build_sleeping_message(bot_config), view=_build_tama_view())
+        return
+
     async with channel.typing():
         # Build the batched input showing who said what
         batch_lines = []
@@ -469,9 +487,7 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
         response_text = resolve_custom_emoji(response_text, channel.guild)
 
         # Tamagotchi: build button view if enabled
-        tama_view = None
-        if bot_config.get("tama_enabled", False) and tama_manager:
-            tama_view = TamagotchiView(bot_config, tama_manager)
+        tama_view = _build_tama_view()
 
         if audio_bytes:
             audio_file = discord.File(fp=io.BytesIO(audio_bytes), filename="chatbuddy_voice.wav")
@@ -1373,10 +1389,28 @@ async def set_heartbeat_cmd(
 async def set_tama_mode(interaction: discord.Interaction, enabled: bool):
     bot_config["tama_enabled"] = enabled
     save_config(bot_config)
-    if enabled and tama_manager:
-        tama_manager.start()
+    if tama_manager:
+        if enabled:
+            tama_manager.start()
+        else:
+            tama_manager.stop()
     state = "**enabled** 🐣" if enabled else "**disabled** 🚫"
     await interaction.response.send_message(f"✅ Tamagotchi mode {state}.", ephemeral=True)
+
+
+@bot.tree.command(name="set-tamagotchi-mode", description="Enable or disable Tamagotchi mode")
+@app_commands.describe(enabled="True to enable, False to disable")
+@app_commands.default_permissions(administrator=True)
+async def set_tamagotchi_mode(interaction: discord.Interaction, enabled: bool):
+    bot_config["tama_enabled"] = enabled
+    save_config(bot_config)
+    if tama_manager:
+        if enabled:
+            tama_manager.start()
+        else:
+            tama_manager.stop()
+    state = "**enabled** ðŸ£" if enabled else "**disabled** ðŸš«"
+    await interaction.response.send_message(f"âœ… Tamagotchi mode {state}.", ephemeral=True)
 
 
 @bot.tree.command(name="set-tama-hunger", description="Configure the hunger stat")
@@ -1493,6 +1527,27 @@ async def set_tama_energy(interaction: discord.Interaction, max: int, api_deplet
     save_config(bot_config)
     await interaction.response.send_message(
         f"✅ Energy: max **{max}**, API **-{api_depletion}**, game **-{game_depletion}**.", ephemeral=True
+    )
+
+
+@bot.tree.command(name="set-tama-rest", description="Configure the rest button and sleep duration")
+@app_commands.describe(
+    duration="How long the bot sleeps in seconds",
+    cooldown="Global cooldown for the rest button in seconds",
+)
+@app_commands.default_permissions(administrator=True)
+async def set_tama_rest(interaction: discord.Interaction, duration: int, cooldown: int):
+    if duration < 1:
+        await interaction.response.send_message("âš ï¸ Duration must be at least 1 second.", ephemeral=True)
+        return
+    if cooldown < 0:
+        await interaction.response.send_message("âš ï¸ Cooldown must be â‰¥ 0.", ephemeral=True)
+        return
+    bot_config["tama_rest_duration"] = duration
+    bot_config["tama_cd_rest"] = cooldown
+    save_config(bot_config)
+    await interaction.response.send_message(
+        f"âœ… Rest: sleep **{duration}s**, cooldown **{cooldown}s**.", ephemeral=True
     )
 
 
@@ -1726,6 +1781,33 @@ async def set_resp_cooldown(interaction: discord.Interaction, message: str):
 
 # ── Debug / admin ──
 
+@bot.tree.command(name="set-resp-rest", description="Set the response message for starting a rest")
+@app_commands.describe(message="Message shown when the bot starts resting")
+@app_commands.default_permissions(administrator=True)
+async def set_resp_rest(interaction: discord.Interaction, message: str):
+    bot_config["tama_resp_rest"] = message
+    save_config(bot_config)
+    await interaction.response.send_message("âœ… Rest response set.", ephemeral=True)
+
+
+@bot.tree.command(name="set-resp-sleeping", description="Set the sleeping auto-reply message (use {time})")
+@app_commands.describe(message="Message shown when users talk to the bot while it is sleeping")
+@app_commands.default_permissions(administrator=True)
+async def set_resp_sleeping(interaction: discord.Interaction, message: str):
+    bot_config["tama_resp_sleeping"] = message
+    save_config(bot_config)
+    await interaction.response.send_message("âœ… Sleeping response set.", ephemeral=True)
+
+
+@bot.tree.command(name="set-resp-no-energy", description="Set the error message when the bot has no energy left")
+@app_commands.describe(message="Ephemeral message shown when play is blocked by zero energy")
+@app_commands.default_permissions(administrator=True)
+async def set_resp_no_energy(interaction: discord.Interaction, message: str):
+    bot_config["tama_resp_no_energy"] = message
+    save_config(bot_config)
+    await interaction.response.send_message("âœ… No-energy response set.", ephemeral=True)
+
+
 @bot.tree.command(name="show-tama-stats", description="View all current Tamagotchi stats and config")
 @app_commands.default_permissions(administrator=True)
 async def show_tama_stats(interaction: discord.Interaction):
@@ -1773,6 +1855,8 @@ async def reset_tama_stats(interaction: discord.Interaction):
     bot_config["tama_dirt"] = 0
     bot_config["tama_dirt_food_counter"] = 0
     bot_config["tama_sick"] = False
+    bot_config["tama_sleeping"] = False
+    bot_config["tama_sleep_until"] = 0.0
     save_config(bot_config)
     await interaction.response.send_message("✅ All Tamagotchi stats reset to max.", ephemeral=True)
 

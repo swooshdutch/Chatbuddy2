@@ -108,6 +108,10 @@ DEFAULTS = {
     "tama_energy_max": 10,
     "tama_energy_depletion_api": 0.1,
     "tama_energy_depletion_game": 0.2,
+    "tama_rest_duration": 300,
+    "tama_cd_rest": 60,
+    "tama_sleeping": False,
+    "tama_sleep_until": 0.0,
     # Dirtiness / poop
     "tama_dirt": 0,
     "tama_dirt_max": 4,
@@ -140,6 +144,9 @@ DEFAULTS = {
     "tama_resp_clean_none": "Already clean! No mess to tidy.",
     "tama_resp_full": "🤰 I'm stuffed! Wait a bit...",
     "tama_resp_cooldown": "⏳ Hold on! You can use this again in {time}.",
+    "tama_resp_rest": "💤 Tucking in for a recharge. See you soon!",
+    "tama_resp_sleeping": "I am sleeping come back in {time}",
+    "tama_resp_no_energy": "⚡ I'm out of energy and need a rest first!",
     "tama_rip_message": "",
 }
 

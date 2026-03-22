@@ -35,6 +35,31 @@ def _fmt_countdown(seconds: float) -> str:
     return f"{s}s"
 
 
+def is_sleeping(config: dict) -> bool:
+    """Return True while the rest timer is active."""
+    sleep_until = float(config.get("tama_sleep_until", 0.0) or 0.0)
+    if sleep_until <= time.time():
+        if config.get("tama_sleeping", False) or sleep_until:
+            config["tama_sleeping"] = False
+            config["tama_sleep_until"] = 0.0
+            save_config(config)
+        return False
+    return True
+
+
+def sleeping_remaining(config: dict) -> float:
+    return max(0.0, float(config.get("tama_sleep_until", 0.0) or 0.0) - time.time())
+
+
+def build_sleeping_message(config: dict) -> str:
+    template = config.get("tama_resp_sleeping", "I am sleeping come back in {time}")
+    return template.replace("{time}", _fmt_countdown(sleeping_remaining(config)))
+
+
+def can_use_energy(config: dict) -> bool:
+    return float(config.get("tama_energy", 0.0) or 0.0) > 0.0
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TamagotchiManager  — runtime state that doesn't belong in config.json
 # ══════════════════════════════════════════════════════════════════════════════
@@ -56,6 +81,8 @@ class TamagotchiManager:
         self._satiation_task: asyncio.Task | None = None
         self._satiation_expiry: float = 0.0
         self._dirt_task: asyncio.Task | None = None
+        self._sleep_task: asyncio.Task | None = None
+        self._sleep_expiry: float = 0.0
         self._rps_games: dict[int, str] = {}        # msg_id -> bot_choice
 
     # ── lifecycle ─────────────────────────────────────────────────────────
@@ -63,6 +90,7 @@ class TamagotchiManager:
     def start(self):
         """Start background tasks if tama is enabled."""
         if self.config.get("tama_enabled", False):
+            self._resume_sleep_state()
             self._start_dirt_task()
 
     def stop(self):
@@ -70,6 +98,8 @@ class TamagotchiManager:
             self._satiation_task.cancel()
         if self._dirt_task and not self._dirt_task.done():
             self._dirt_task.cancel()
+        if self._sleep_task and not self._sleep_task.done():
+            self._sleep_task.cancel()
 
     # ── cooldowns ─────────────────────────────────────────────────────────
 
@@ -84,6 +114,51 @@ class TamagotchiManager:
 
     def set_cooldown(self, action: str, seconds: int):
         self._cooldowns[action] = time.time() + seconds
+
+    # —— sleep / rest ——––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+    @property
+    def sleeping(self) -> bool:
+        return self._sleep_expiry > time.time()
+
+    @property
+    def sleep_remaining(self) -> float:
+        return max(0.0, self._sleep_expiry - time.time())
+
+    def _resume_sleep_state(self):
+        expiry = float(self.config.get("tama_sleep_until", 0.0) or 0.0)
+        self._sleep_expiry = expiry
+        if expiry <= time.time():
+            if self.config.get("tama_sleeping", False) or expiry:
+                self.finish_rest()
+            return
+        if self._sleep_task and not self._sleep_task.done():
+            self._sleep_task.cancel()
+        self._sleep_task = asyncio.create_task(self._sleep_countdown(self.sleep_remaining))
+
+    def begin_rest(self):
+        duration = max(1, int(self.config.get("tama_rest_duration", 300)))
+        self._sleep_expiry = time.time() + duration
+        self.config["tama_sleeping"] = True
+        self.config["tama_sleep_until"] = self._sleep_expiry
+        save_config(self.config)
+        if self._sleep_task and not self._sleep_task.done():
+            self._sleep_task.cancel()
+        self._sleep_task = asyncio.create_task(self._sleep_countdown(duration))
+
+    def finish_rest(self):
+        self._sleep_expiry = 0.0
+        self.config["tama_sleeping"] = False
+        self.config["tama_sleep_until"] = 0.0
+        self.config["tama_energy"] = float(self.config.get("tama_energy_max", 10))
+        save_config(self.config)
+
+    async def _sleep_countdown(self, duration: float):
+        try:
+            await asyncio.sleep(duration)
+        except asyncio.CancelledError:
+            return
+        self.finish_rest()
 
     # ── satiation timer ───────────────────────────────────────────────────
 
@@ -129,7 +204,8 @@ class TamagotchiManager:
                 dirt = self.config.get("tama_dirt", 0)
                 if dirt <= 0:
                     continue
-                dmg = self.config.get("tama_dirt_health_damage", 0.5) * dirt
+                multiplier = 2.0 if float(self.config.get("tama_energy", 0.0) or 0.0) <= 0.0 else 1.0
+                dmg = self.config.get("tama_dirt_health_damage", 0.5) * dirt * multiplier
                 self.config["tama_health"] = max(
                     0.0, round(self.config.get("tama_health", 0) - dmg, 2)
                 )
@@ -157,30 +233,52 @@ def deplete_stats(config: dict) -> str | None:
     if not config.get("tama_enabled", False):
         return None
 
+    multiplier = 2.0 if float(config.get("tama_energy", 0.0) or 0.0) <= 0.0 else 1.0
+
     # Deplete hunger / thirst / happiness
     config["tama_hunger"] = max(
-        0.0, round(config.get("tama_hunger", 0) - config.get("tama_hunger_depletion", 0.2), 2)
+        0.0,
+        round(
+            config.get("tama_hunger", 0) - (config.get("tama_hunger_depletion", 0.2) * multiplier),
+            2,
+        ),
     )
     config["tama_thirst"] = max(
-        0.0, round(config.get("tama_thirst", 0) - config.get("tama_thirst_depletion", 0.3), 2)
+        0.0,
+        round(
+            config.get("tama_thirst", 0) - (config.get("tama_thirst_depletion", 0.3) * multiplier),
+            2,
+        ),
     )
     config["tama_happiness"] = max(
-        0.0, round(config.get("tama_happiness", 0) - config.get("tama_happiness_depletion", 0.1), 2)
+        0.0,
+        round(
+            config.get("tama_happiness", 0) - (config.get("tama_happiness_depletion", 0.1) * multiplier),
+            2,
+        ),
     )
 
     # Deplete energy (API call)
     config["tama_energy"] = max(
-        0.0, round(config.get("tama_energy", 0) - config.get("tama_energy_depletion_api", 0.1), 2)
+        0.0,
+        round(
+            config.get("tama_energy", 0) - (config.get("tama_energy_depletion_api", 0.1) * multiplier),
+            2,
+        ),
     )
 
     # Deplete satiation
     config["tama_satiation"] = max(
-        0.0, round(config.get("tama_satiation", 0) - config.get("tama_satiation_depletion", 0.2), 2)
+        0.0,
+        round(
+            config.get("tama_satiation", 0) - (config.get("tama_satiation_depletion", 0.2) * multiplier),
+            2,
+        ),
     )
 
     # ── Health damage from stats below threshold ──
     threshold = config.get("tama_health_threshold", 2.0)
-    dmg_per = config.get("tama_health_damage_per_stat", 1.0)
+    dmg_per = config.get("tama_health_damage_per_stat", 1.0) * multiplier
     health_loss = 0.0
     for stat_key in ("tama_hunger", "tama_thirst", "tama_happiness"):
         if config.get(stat_key, 0) < threshold:
@@ -188,7 +286,7 @@ def deplete_stats(config: dict) -> str | None:
 
     # ── Sickness damage ──
     if config.get("tama_sick", False):
-        health_loss += config.get("tama_sick_health_damage", 0.5)
+        health_loss += config.get("tama_sick_health_damage", 0.5) * multiplier
 
     if health_loss > 0:
         config["tama_health"] = max(
@@ -208,8 +306,13 @@ def deplete_energy_game(config: dict):
     """Called when a game (e.g. RPS) is played — deducts game energy cost."""
     if not config.get("tama_enabled", False):
         return
+    multiplier = 2.0 if float(config.get("tama_energy", 0.0) or 0.0) <= 0.0 else 1.0
     config["tama_energy"] = max(
-        0.0, round(config.get("tama_energy", 0) - config.get("tama_energy_depletion_game", 0.2), 2)
+        0.0,
+        round(
+            config.get("tama_energy", 0) - (config.get("tama_energy_depletion_game", 0.2) * multiplier),
+            2,
+        ),
     )
     save_config(config)
 
@@ -239,6 +342,8 @@ def trigger_death(config: dict) -> str:
     config["tama_dirt"] = 0
     config["tama_dirt_food_counter"] = 0
     config["tama_sick"] = False
+    config["tama_sleeping"] = False
+    config["tama_sleep_until"] = 0.0
     save_config(config)
 
     custom = config.get("tama_rip_message", "").strip()
@@ -306,6 +411,7 @@ def build_tamagotchi_system_prompt(config: dict) -> str:
     satiation  = config.get("tama_satiation", 0)
     dirt       = config.get("tama_dirt", 0)
     sick       = config.get("tama_sick", False)
+    sleeping   = is_sleeping(config)
 
     max_hunger  = config.get("tama_hunger_max", 10)
     max_thirst  = config.get("tama_thirst_max", 10)
@@ -326,8 +432,10 @@ def build_tamagotchi_system_prompt(config: dict) -> str:
         f"Satiation: {_fs(satiation)}/{max_sat}",
         f"Dirtiness (poop): {dirt}/{max_dirt}",
         f"Sick: {'YES' if sick else 'No'}",
+        f"Sleeping: {'YES' if sleeping else 'No'}",
         "Users interact via buttons (feed, drink, play, medicate, clean). "
         "Your stats decrease each time you respond. "
+        "When energy hits 0 you must rest before playing again, and all stat loss is doubled until you do. "
         "If your health reaches 0, you die — your soul is wiped and stats reset.]",
     ]
     return "\n".join(lines)
@@ -359,6 +467,7 @@ class TamagotchiView(ui.View):
         energy    = self.config.get("tama_energy", 0)
         dirt      = self.config.get("tama_dirt", 0)
         sick      = self.config.get("tama_sick", False)
+        sleeping  = self.manager.sleeping
 
         max_hunger  = self.config.get("tama_hunger_max", 10)
         max_thirst  = self.config.get("tama_thirst_max", 10)
@@ -389,6 +498,8 @@ class TamagotchiView(ui.View):
         # Conditionally add sickness icon
         if sick:
             stat_items.append(("💀 Sick", 1))
+        if sleeping:
+            stat_items.append((f"💤 {_fmt_countdown(self.manager.sleep_remaining)}", 1))
 
         for label, row in stat_items:
             btn = ui.Button(
@@ -405,11 +516,20 @@ class TamagotchiView(ui.View):
         self.add_item(PlayButton(self.config, self.manager))
         self.add_item(MedicateButton(self.config, self.manager))
         self.add_item(CleanButton(self.config, self.manager))
+        self.add_item(RestButton(self.config, self.manager))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Action Buttons
 # ══════════════════════════════════════════════════════════════════════════════
+
+async def _send_sleep_block(interaction: discord.Interaction, config: dict):
+    await interaction.response.send_message(build_sleeping_message(config), ephemeral=True)
+
+
+def _no_energy_message(config: dict) -> str:
+    return config.get("tama_resp_no_energy", "⚡ I'm out of energy and need a rest first!")
+
 
 class FeedButton(ui.Button):
     def __init__(self, config, manager):
@@ -423,6 +543,10 @@ class FeedButton(ui.Button):
         self.manager = manager
 
     async def callback(self, interaction: discord.Interaction):
+        if self.manager.sleeping:
+            await _send_sleep_block(interaction, self.config)
+            return
+
         # Cooldown check
         remaining = self.manager.check_cooldown("feed")
         if remaining > 0:
@@ -484,6 +608,10 @@ class DrinkButton(ui.Button):
         self.manager = manager
 
     async def callback(self, interaction: discord.Interaction):
+        if self.manager.sleeping:
+            await _send_sleep_block(interaction, self.config)
+            return
+
         remaining = self.manager.check_cooldown("drink")
         if remaining > 0:
             msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
@@ -537,12 +665,20 @@ class PlayButton(ui.Button):
         self.manager = manager
 
     async def callback(self, interaction: discord.Interaction):
+        if self.manager.sleeping:
+            await _send_sleep_block(interaction, self.config)
+            return
+
         remaining = self.manager.check_cooldown("play")
         if remaining > 0:
             msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
                 "{time}", _fmt_countdown(remaining)
             )
             await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        if not can_use_energy(self.config):
+            await interaction.response.send_message(_no_energy_message(self.config), ephemeral=True)
             return
 
         # Apply hunger/thirst loss for playing
@@ -590,6 +726,10 @@ class MedicateButton(ui.Button):
         self.manager = manager
 
     async def callback(self, interaction: discord.Interaction):
+        if self.manager.sleeping:
+            await _send_sleep_block(interaction, self.config)
+            return
+
         remaining = self.manager.check_cooldown("medicate")
         if remaining > 0:
             msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
@@ -622,6 +762,10 @@ class CleanButton(ui.Button):
         self.manager = manager
 
     async def callback(self, interaction: discord.Interaction):
+        if self.manager.sleeping:
+            await _send_sleep_block(interaction, self.config)
+            return
+
         remaining = self.manager.check_cooldown("clean")
         if remaining > 0:
             msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
@@ -647,6 +791,37 @@ class CleanButton(ui.Button):
 # ══════════════════════════════════════════════════════════════════════════════
 
 _RPS_EMOJI = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
+
+
+class RestButton(ui.Button):
+    def __init__(self, config, manager):
+        super().__init__(
+            label="💤 Rest",
+            style=discord.ButtonStyle.danger,
+            custom_id="tama_rest",
+            row=3,
+        )
+        self.config = config
+        self.manager = manager
+
+    async def callback(self, interaction: discord.Interaction):
+        remaining = self.manager.check_cooldown("rest")
+        if remaining > 0:
+            msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
+                "{time}", _fmt_countdown(remaining)
+            )
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        if self.manager.sleeping:
+            await _send_sleep_block(interaction, self.config)
+            return
+
+        self.manager.begin_rest()
+        self.manager.set_cooldown("rest", self.config.get("tama_cd_rest", 60))
+        msg = self.config.get("tama_resp_rest", "💤 Tucking in for a recharge. See you soon!")
+        msg += f"\n⏳ {_fmt_countdown(self.manager.sleep_remaining)}"
+        await interaction.response.send_message(msg)
 
 
 class RPSView(ui.View):
