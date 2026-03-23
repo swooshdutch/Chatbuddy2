@@ -2,8 +2,9 @@
 tamagotchi.py â€” Gamified Tamagotchi system for ChatBuddy.
 
 Handles all Tamagotchi stats, Discord button UI (stat display + action
-buttons), cooldowns, satiation timer, poop background damage, the
-Rock-Paper-Scissors minigame, death/reset, and system-prompt injection.
+buttons), cooldowns, loneliness and energy timers, poop background
+damage, the Rock-Paper-Scissors minigame, death/reset, and
+system-prompt injection.
 
 All stat changes are managed here so the LLM cannot cheat.
 """
@@ -80,6 +81,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "emoji": "🍔",
         "item_type": "food",
         "multiplier": 1.0,
+        "energy_multiplier": 1.0,
         "happiness_delta": 0.0,
         "button_style": "success",
         "amount": -1,
@@ -91,6 +93,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "emoji": "🥤",
         "item_type": "drink",
         "multiplier": 1.0,
+        "energy_multiplier": 1.0,
         "happiness_delta": 0.0,
         "button_style": "primary",
         "amount": -1,
@@ -102,6 +105,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "emoji": "🧸",
         "item_type": "misc",
         "multiplier": 0.0,
+        "energy_multiplier": 0.0,
         "happiness_delta": 1.0,
         "button_style": "success",
         "amount": 0,
@@ -113,6 +117,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "emoji": "🍣",
         "item_type": "food",
         "multiplier": 1.3,
+        "energy_multiplier": 2.0,
         "happiness_delta": 0.0,
         "button_style": "primary",
         "amount": 0,
@@ -124,6 +129,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "emoji": "🍖",
         "item_type": "food",
         "multiplier": 1.6,
+        "energy_multiplier": 2.0,
         "happiness_delta": 0.0,
         "button_style": "danger",
         "amount": 0,
@@ -135,6 +141,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "emoji": "⚫",
         "item_type": "misc",
         "multiplier": 0.0,
+        "energy_multiplier": 0.0,
         "happiness_delta": -1.0,
         "button_style": "secondary",
         "amount": 0,
@@ -142,7 +149,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "store_in_inventory": False,
     },
 }
-TAMA_INVENTORY_DEFAULTS_VERSION = 3
+TAMA_INVENTORY_DEFAULTS_VERSION = 4
 
 BUTTON_STYLE_BY_NAME = {
     "primary": discord.ButtonStyle.primary,
@@ -211,6 +218,7 @@ def _normalize_inventory_item(item_id: str, raw_item: dict) -> dict:
         button_style = "secondary"
 
     multiplier = max(0.0, float(raw_item.get("multiplier", 1.0) or 0.0))
+    energy_multiplier = max(0.0, float(raw_item.get("energy_multiplier", 1.0) or 0.0))
     happiness_delta = round(float(raw_item.get("happiness_delta", 0.0) or 0.0), 2)
     amount = _coerce_item_amount(raw_item.get("amount", 0))
     default_emoji = "🍔" if item_type == "food" else ("🥤" if item_type == "drink" else "🎁")
@@ -222,6 +230,7 @@ def _normalize_inventory_item(item_id: str, raw_item: dict) -> dict:
         "emoji": emoji,
         "item_type": item_type,
         "multiplier": multiplier,
+        "energy_multiplier": energy_multiplier,
         "happiness_delta": happiness_delta,
         "button_style": button_style,
         "amount": amount,
@@ -371,12 +380,12 @@ def wipe_soul_file() -> None:
 
 
 def reset_tamagotchi_state(config: dict) -> None:
+    now = time.time()
     config["tama_hunger"] = round(float(config.get("tama_hunger_max", 10)) * 0.5, 2)
     config["tama_thirst"] = round(float(config.get("tama_thirst_max", 10)) * 0.5, 2)
     config["tama_happiness"] = round(float(config.get("tama_happiness_max", 10)) * 0.5, 2)
     config["tama_health"] = float(config.get("tama_health_max", 10))
     config["tama_energy"] = float(config.get("tama_energy_max", 10))
-    config["tama_satiation"] = 0.0
     config["tama_dirt"] = 0
     config["tama_dirt_food_counter"] = 0
     config["tama_dirt_grace_until"] = 0.0
@@ -385,6 +394,63 @@ def reset_tamagotchi_state(config: dict) -> None:
     config["tama_sick"] = False
     config["tama_sleeping"] = False
     config["tama_sleep_until"] = 0.0
+    config["tama_last_interaction_at"] = now
+    config["tama_lonely_last_update_at"] = now
+
+
+def apply_loneliness(config: dict, *, now: float | None = None, save: bool = False) -> float:
+    if not config.get("tama_enabled", False):
+        return 0.0
+
+    now = time.time() if now is None else now
+    interval = max(1.0, float(config.get("tama_happiness_depletion_interval", 600) or 600))
+    amount = max(0.0, float(config.get("tama_happiness_depletion", 0.1) or 0.0))
+    last_interaction = float(config.get("tama_last_interaction_at", 0.0) or 0.0)
+    last_update = float(config.get("tama_lonely_last_update_at", 0.0) or 0.0)
+    base = max(last_interaction, last_update)
+
+    if base <= 0.0:
+        config["tama_last_interaction_at"] = now
+        config["tama_lonely_last_update_at"] = now
+        if save:
+            save_config(config)
+        return 0.0
+
+    steps = int(max(0.0, now - base) // interval)
+    if steps <= 0 or amount <= 0.0:
+        return 0.0
+
+    loss = round(steps * amount, 2)
+    config["tama_happiness"] = max(
+        0.0,
+        round(float(config.get("tama_happiness", 0.0) or 0.0) - loss, 2),
+    )
+    config["tama_lonely_last_update_at"] = base + (steps * interval)
+    if save:
+        save_config(config)
+    return loss
+
+
+def apply_need_depletion_from_energy(config: dict, energy_loss: float) -> None:
+    if not config.get("tama_enabled", False):
+        return
+
+    energy_loss = max(0.0, float(energy_loss or 0.0))
+    if energy_loss <= 0.0:
+        return
+
+    per_energy = max(0.01, float(config.get("tama_needs_depletion_per_energy", 1.0) or 1.0))
+    hunger_loss = (energy_loss / per_energy) * max(0.0, float(config.get("tama_hunger_depletion", 1.1) or 0.0))
+    thirst_loss = (energy_loss / per_energy) * max(0.0, float(config.get("tama_thirst_depletion", 1.8) or 0.0))
+
+    config["tama_hunger"] = max(
+        0.0,
+        round(float(config.get("tama_hunger", 0.0) or 0.0) - hunger_loss, 2),
+    )
+    config["tama_thirst"] = max(
+        0.0,
+        round(float(config.get("tama_thirst", 0.0) or 0.0) - thirst_loss, 2),
+    )
 
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -395,8 +461,8 @@ class TamagotchiManager:
     """
     Manages ephemeral runtime state:
       â€¢ Global button cooldowns  (dict[str, float] â€” action â†’ timestamp)
-      â€¢ Satiation timer           (asyncio.Task or None)
-      â€¢ Satiation expiry epoch    (float â€” 0.0 if inactive)
+      â€¢ Loneliness timer          (asyncio.Task or None)
+      â€¢ Energy recharge timer     (asyncio.Task or None)
       â€¢ Poop grace timer          (asyncio.Task or None)
       â€¢ RPS pending games         (dict[int, str] â€” message_id â†’ bot_choice)
     """
@@ -405,11 +471,10 @@ class TamagotchiManager:
         self.bot = bot
         self.config = config
         self._cooldowns: dict[str, float] = {}     # action -> expiry epoch
-        self._satiation_task: asyncio.Task | None = None
-        self._satiation_expiry: float = 0.0
         self._dirt_task: asyncio.Task | None = None
         self._energy_task: asyncio.Task | None = None
         self._energy_expiry: float = 0.0
+        self._lonely_task: asyncio.Task | None = None
         self._sleep_task: asyncio.Task | None = None
         self._sleep_expiry: float = 0.0
         self._hatch_task: asyncio.Task | None = None
@@ -424,18 +489,23 @@ class TamagotchiManager:
         if self.config.get("tama_enabled", False):
             self._resume_sleep_state()
             self._resume_hatching_state()
-            if self.config.get("tama_satiation", 0) >= self.config.get("tama_satiation_max", 10):
-                self.start_satiation_timer()
             self._sync_dirt_grace()
-            self.record_interaction(save=False)
+            apply_loneliness(self.config, save=True)
+            now = time.time()
+            if float(self.config.get("tama_last_interaction_at", 0.0) or 0.0) <= 0.0:
+                self.config["tama_last_interaction_at"] = now
+                self.config["tama_lonely_last_update_at"] = now
+                save_config(self.config)
+            self._start_energy_task()
+            self._start_lonely_task()
 
     def stop(self):
-        if self._satiation_task and not self._satiation_task.done():
-            self._satiation_task.cancel()
         if self._dirt_task and not self._dirt_task.done():
             self._dirt_task.cancel()
         if self._energy_task and not self._energy_task.done():
             self._energy_task.cancel()
+        if self._lonely_task and not self._lonely_task.done():
+            self._lonely_task.cancel()
         if self._sleep_task and not self._sleep_task.done():
             self._sleep_task.cancel()
         if self._hatch_task and not self._hatch_task.done():
@@ -463,10 +533,13 @@ class TamagotchiManager:
     def record_interaction(self, *, save: bool = True):
         if not self.config.get("tama_enabled", False):
             return
-        self.config["tama_last_interaction_at"] = time.time()
+        now = time.time()
+        self.config["tama_last_interaction_at"] = now
+        self.config["tama_lonely_last_update_at"] = now
         if save:
             save_config(self.config)
         self._start_energy_task()
+        self._start_lonely_task()
 
     def _start_energy_task(self):
         interval = max(1, int(self.config.get("tama_energy_recharge_interval", 300)))
@@ -486,6 +559,30 @@ class TamagotchiManager:
                 recharge = max(0.0, float(self.config.get("tama_energy_recharge_amount", 0.5)))
                 self.config["tama_energy"] = min(maximum, round(current + recharge, 2))
                 save_config(self.config)
+        except asyncio.CancelledError:
+            return
+
+    def _start_lonely_task(self):
+        if self._lonely_task and not self._lonely_task.done():
+            self._lonely_task.cancel()
+        self._lonely_task = asyncio.create_task(self._lonely_loop())
+
+    async def _lonely_loop(self):
+        try:
+            while True:
+                interval = max(1.0, float(self.config.get("tama_happiness_depletion_interval", 600) or 600))
+                last_update = max(
+                    float(self.config.get("tama_last_interaction_at", 0.0) or 0.0),
+                    float(self.config.get("tama_lonely_last_update_at", 0.0) or 0.0),
+                )
+                if last_update <= 0.0:
+                    last_update = time.time()
+                    self.config["tama_last_interaction_at"] = last_update
+                    self.config["tama_lonely_last_update_at"] = last_update
+                    save_config(self.config)
+                sleep_for = max(1.0, interval - max(0.0, time.time() - last_update))
+                await asyncio.sleep(sleep_for)
+                apply_loneliness(self.config, save=True)
         except asyncio.CancelledError:
             return
 
@@ -612,7 +709,8 @@ class TamagotchiManager:
         if self._hatch_task and not self._hatch_task.done():
             self._hatch_task.cancel()
         self.clear_poop_timers()
-        self.clear_satiation_timer()
+        if self._lonely_task and not self._lonely_task.done():
+            self._lonely_task.cancel()
         if self._sleep_task and not self._sleep_task.done():
             self._sleep_task.cancel()
         self._sleep_expiry = 0.0
@@ -678,6 +776,8 @@ class TamagotchiManager:
         message_id = str(self.config.get("tama_hatch_message_id", "") or "").strip()
         self._clear_hatch_state()
         save_config(self.config)
+        if self.config.get("tama_enabled", False):
+            self._start_lonely_task()
 
         if channel is not None and message_id:
             try:
@@ -751,53 +851,6 @@ class TamagotchiManager:
             return
         if self.config.get("tama_hatching", False):
             await self._complete_hatching()
-
-    # â”€â”€ satiation timer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-    @property
-    def satiation_active(self) -> bool:
-        if self.config.get("tama_satiation", 0) < self.config.get("tama_satiation_max", 10):
-            self.clear_satiation_timer()
-            return False
-        return self._satiation_expiry > time.time()
-
-    @property
-    def satiation_remaining(self) -> float:
-        return max(0.0, self._satiation_expiry - time.time())
-
-    def clear_satiation_timer(self):
-        self._satiation_expiry = 0.0
-        if self._satiation_task and not self._satiation_task.done():
-            self._satiation_task.cancel()
-
-    def sync_satiation_timer(self):
-        if self.config.get("tama_satiation", 0) >= self.config.get("tama_satiation_max", 10):
-            self.start_satiation_timer()
-        else:
-            self.clear_satiation_timer()
-
-    def start_satiation_timer(self):
-        interval = max(1, int(self.config.get("tama_satiation_timer", 300)))
-        self._satiation_expiry = time.time() + interval
-        self.clear_satiation_timer()
-        self._satiation_expiry = time.time() + interval
-        self._satiation_task = asyncio.create_task(self._satiation_countdown())
-
-    async def _satiation_countdown(self):
-        try:
-            while self.config.get("tama_satiation", 0) >= self.config.get("tama_satiation_max", 10):
-                interval = max(1, int(self.config.get("tama_satiation_timer", 300)))
-                self._satiation_expiry = time.time() + interval
-                await asyncio.sleep(interval)
-                decrease = max(0.0, float(self.config.get("tama_satiation_timer_decrease", 1.0)))
-                self.config["tama_satiation"] = max(
-                    0.0, round(self.config.get("tama_satiation", 0) - decrease, 2)
-                )
-                save_config(self.config)
-        except asyncio.CancelledError:
-            return
-        # Timer expired â€” reset satiation to 0
-        self._satiation_expiry = 0.0
 
     # â”€â”€ poop damage background â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -910,9 +963,9 @@ class TamagotchiManager:
 
 def deplete_stats(config: dict) -> str | None:
     """
-    Called after every LLM inference.  Depletes hunger, thirst, happiness,
-    energy (api), satiation.  Applies health damage from stats below
-    threshold and from sickness.  Checks for death.
+    Called after every LLM inference. Applies time-based loneliness,
+    depletes energy for the inference, converts that energy loss into
+    hunger/thirst loss, applies health damage, and checks for death.
 
     Returns None normally, or a death-message string if death occurred.
     """
@@ -921,57 +974,18 @@ def deplete_stats(config: dict) -> str | None:
 
     multiplier = 2.0 if float(config.get("tama_energy", 0.0) or 0.0) <= 0.0 else 1.0
 
-    # Deplete hunger / thirst
-    config["tama_hunger"] = max(
-        0.0,
-        round(
-            config.get("tama_hunger", 0) - (config.get("tama_hunger_depletion", 0.2) * multiplier),
-            2,
-        ),
-    )
-    config["tama_thirst"] = max(
-        0.0,
-        round(
-            config.get("tama_thirst", 0) - (config.get("tama_thirst_depletion", 0.3) * multiplier),
-            2,
-        ),
-    )
-
-    low_need_threshold = float(config.get("tama_happiness_low_need_threshold", 5.0))
-    low_need_penalty = max(0.0, float(config.get("tama_happiness_low_need_penalty", 0.1)))
-    low_need_count = 0
-    for stat_key in ("tama_hunger", "tama_thirst"):
-        if float(config.get(stat_key, 0) or 0) < low_need_threshold:
-            low_need_count += 1
-
-    happiness_loss = (
-        float(config.get("tama_happiness_depletion", 0.1)) + (low_need_count * low_need_penalty)
-    ) * multiplier
-    if config.get("tama_sick", False):
-        happiness_loss *= max(1.0, float(config.get("tama_sick_happiness_multiplier", 2.0)))
-
-    config["tama_happiness"] = max(
-        0.0,
-        round(float(config.get("tama_happiness", 0)) - happiness_loss, 2),
-    )
+    apply_loneliness(config)
 
     # Deplete energy (API call)
+    energy_loss = float(config.get("tama_energy_depletion_api", 0.1) or 0.0) * multiplier
     config["tama_energy"] = max(
         0.0,
         round(
-            config.get("tama_energy", 0) - (config.get("tama_energy_depletion_api", 0.1) * multiplier),
+            config.get("tama_energy", 0) - energy_loss,
             2,
         ),
     )
-
-    # Deplete satiation
-    config["tama_satiation"] = max(
-        0.0,
-        round(
-            config.get("tama_satiation", 0) - (config.get("tama_satiation_depletion", 0.1) * multiplier),
-            2,
-        ),
-    )
+    apply_need_depletion_from_energy(config, energy_loss)
 
     threshold = float(config.get("tama_health_threshold", 2.0))
     low_hunger = float(config.get("tama_hunger", 0) or 0) < threshold
@@ -1015,13 +1029,15 @@ def deplete_energy_game(config: dict):
     if not config.get("tama_enabled", False):
         return
     multiplier = 2.0 if float(config.get("tama_energy", 0.0) or 0.0) <= 0.0 else 1.0
+    energy_loss = float(config.get("tama_energy_depletion_game", 0.5) or 0.0) * multiplier
     config["tama_energy"] = max(
         0.0,
         round(
-            config.get("tama_energy", 0) - (config.get("tama_energy_depletion_game", 0.2) * multiplier),
+            config.get("tama_energy", 0) - energy_loss,
             2,
         ),
     )
+    apply_need_depletion_from_energy(config, energy_loss)
     save_config(config)
 
 
@@ -1115,7 +1131,6 @@ def build_tamagotchi_system_prompt(config: dict) -> str:
     happiness  = config.get("tama_happiness", 0)
     health     = config.get("tama_health", 0)
     energy     = config.get("tama_energy", 0)
-    satiation  = config.get("tama_satiation", 0)
     dirt       = config.get("tama_dirt", 0)
     sick       = config.get("tama_sick", False)
     sleeping   = is_sleeping(config)
@@ -1125,7 +1140,6 @@ def build_tamagotchi_system_prompt(config: dict) -> str:
     max_happy   = config.get("tama_happiness_max", 10)
     max_health  = config.get("tama_health_max", 10)
     max_energy  = config.get("tama_energy_max", 10)
-    max_sat     = config.get("tama_satiation_max", 10)
     max_dirt    = config.get("tama_dirt_max", 4)
 
     lines = [
@@ -1136,13 +1150,12 @@ def build_tamagotchi_system_prompt(config: dict) -> str:
         f"Happiness: {_fs(happiness)}/{max_happy}",
         f"Health: {_fs(health)}/{max_health}",
         f"Energy: {_fs(energy)}/{max_energy}",
-        f"Satiation: {_fs(satiation)}/{max_sat}",
         f"Dirtiness (poop): {dirt}/{max_dirt}",
         f"Sick: {'YES' if sick else 'No'}",
         f"Sleeping: {'YES' if sleeping else 'No'}",
         "Users interact via buttons (inventory, play, medicate, clean). "
-        "Your stats decrease each time you respond. "
-        "When energy hits 0 you must rest before playing again, and all stat loss is doubled until you do. "
+        "Hunger and thirst drop when you spend energy. Happiness drops from loneliness over time without interaction. "
+        "When energy hits 0 you must rest before playing again, and all energy-linked stat loss is doubled until you do. "
         "If your health reaches 0, you die — your soul is wiped and stats reset.]",
     ]
     return "\n".join(lines)
@@ -1153,16 +1166,11 @@ def build_tamagotchi_message_footer(config: dict, manager: TamagotchiManager | N
     if not config.get("tama_enabled", False):
         return ""
 
-    sat_text = f"🤰 {_fs(config.get('tama_satiation', 0))}/{config.get('tama_satiation_max', 10)}"
-    if manager and manager.satiation_active:
-        sat_text = f"🤰 {_discord_relative_epoch(manager._satiation_expiry)}"
-
     parts = [
         f"🍔 {_fs(config.get('tama_hunger', 0))}/{config.get('tama_hunger_max', 10)}",
         f"🥤 {_fs(config.get('tama_thirst', 0))}/{config.get('tama_thirst_max', 10)}",
         f"{happiness_emoji(config)} {_fs(config.get('tama_happiness', 0))}/{config.get('tama_happiness_max', 10)}",
         f"❤️ {_fs(config.get('tama_health', 0))}/{config.get('tama_health_max', 10)}",
-        sat_text,
         f"⚡ {_fs(config.get('tama_energy', 0))}/{config.get('tama_energy_max', 10)}",
         f"💩 {config.get('tama_dirt', 0)}/{config.get('tama_dirt_max', 4)}",
     ]
@@ -1206,8 +1214,10 @@ class TamagotchiView(ui.View):
         # â”€â”€ Row 0: Action buttons only â”€â”€
         self.add_item(InventoryButton(self.config, self.manager))
         self.add_item(PlayButton(self.config, self.manager))
-        self.add_item(MedicateButton(self.config, self.manager))
-        self.add_item(CleanButton(self.config, self.manager))
+        if self.config.get("tama_sick", False):
+            self.add_item(MedicateButton(self.config, self.manager))
+        if int(self.config.get("tama_dirt", 0) or 0) > 0:
+            self.add_item(CleanButton(self.config, self.manager))
         if energy < 1:
             self.add_item(RestButton(self.config, self.manager))
 
@@ -1314,30 +1324,20 @@ async def _consume_inventory_item(
         await interaction.response.send_message(msg, ephemeral=True)
         return
 
-    if action in {"feed", "drink"} and manager.satiation_active:
-        msg = config.get("tama_resp_full", "🤰 I'm stuffed!")
-        remaining_sat = manager.satiation_remaining
-        msg += f"\n⏳ Wait **{_discord_relative_time(remaining_sat)}**."
-        await interaction.response.send_message(msg, ephemeral=True)
-        return
-
     multiplier = max(0.0, float(item.get("multiplier", 1.0) or 0.0))
-    max_sat = float(config.get("tama_satiation_max", 10))
 
     if action == "feed":
         max_hunger = float(config.get("tama_hunger_max", 10))
         fill = float(config.get("tama_feed_amount", 1.0)) * multiplier
         config["tama_hunger"] = min(max_hunger, round(float(config.get("tama_hunger", 0)) + fill, 2))
 
-        sat_inc = float(config.get("tama_satiation_food_increase", 1.0)) * multiplier
-        config["tama_satiation"] = min(max_sat, round(float(config.get("tama_satiation", 0)) + sat_inc, 2))
-
         food_energy_counter = int(config.get("tama_feed_energy_counter", 0)) + 1
-        food_energy_every = max(1, int(config.get("tama_feed_energy_every", 3)))
+        food_energy_every = max(1, int(config.get("tama_feed_energy_every", 1)))
         config["tama_feed_energy_counter"] = food_energy_counter
         if food_energy_counter >= food_energy_every:
             config["tama_feed_energy_counter"] = 0
-            energy_gain = max(0.0, float(config.get("tama_feed_energy_gain", 0.2)))
+            energy_multiplier = max(0.0, float(item.get("energy_multiplier", 1.0) or 0.0))
+            energy_gain = max(0.0, float(config.get("tama_feed_energy_gain", 0.1))) * energy_multiplier
             max_energy = float(config.get("tama_energy_max", 10))
             config["tama_energy"] = min(
                 max_energy,
@@ -1357,15 +1357,13 @@ async def _consume_inventory_item(
             fill = float(config.get("tama_drink_amount", 1.0)) * multiplier
             config["tama_thirst"] = min(max_thirst, round(float(config.get("tama_thirst", 0)) + fill, 2))
 
-            sat_inc = float(config.get("tama_satiation_drink_increase", 1.0)) * multiplier
-            config["tama_satiation"] = min(max_sat, round(float(config.get("tama_satiation", 0)) + sat_inc, 2))
-
             drink_energy_counter = int(config.get("tama_drink_energy_counter", 0)) + 1
-            drink_energy_every = max(1, int(config.get("tama_drink_energy_every", 3)))
+            drink_energy_every = max(1, int(config.get("tama_drink_energy_every", 1)))
             config["tama_drink_energy_counter"] = drink_energy_counter
             if drink_energy_counter >= drink_energy_every:
                 config["tama_drink_energy_counter"] = 0
-                energy_gain = max(0.0, float(config.get("tama_drink_energy_gain", 0.1)))
+                energy_multiplier = max(0.0, float(item.get("energy_multiplier", 1.0) or 0.0))
+                energy_gain = max(0.0, float(config.get("tama_drink_energy_gain", 0.05))) * energy_multiplier
                 max_energy = float(config.get("tama_energy_max", 10))
                 config["tama_energy"] = min(
                     max_energy,
@@ -1386,8 +1384,6 @@ async def _consume_inventory_item(
     if not item["is_unlimited"]:
         config["tama_inventory_items"][item_id]["amount"] = max(0, item["amount"] - 1)
 
-    if action in {"feed", "drink"}:
-        manager.sync_satiation_timer()
     save_config(config)
     manager.set_cooldown(action, int(config.get(cooldown_key, 60)))
 
@@ -1707,27 +1703,6 @@ class GameSelectView(ui.View):
             )
             await interaction.response.send_message(msg, ephemeral=True)
             return
-
-        if self.manager.satiation_active:
-            msg = self.config.get("tama_resp_full", "🤰 I'm stuffed!")
-            remaining_sat = self.manager.satiation_remaining
-            msg += f"\n⏳ Wait **{_discord_relative_time(remaining_sat)}** before playing again."
-            await interaction.response.send_message(msg, ephemeral=True)
-            return
-
-        hunger_loss = self.config.get("tama_play_hunger_loss", 0.4)
-        thirst_loss = self.config.get("tama_play_thirst_loss", 0.2)
-        self.config["tama_hunger"] = max(
-            0.0, round(self.config.get("tama_hunger", 0) - hunger_loss, 2)
-        )
-        self.config["tama_thirst"] = max(
-            0.0, round(self.config.get("tama_thirst", 0) - thirst_loss, 2)
-        )
-        satiation_loss = self.config.get("tama_play_satiation_loss", 0.5)
-        self.config["tama_satiation"] = max(
-            0.0, round(self.config.get("tama_satiation", 0) - satiation_loss, 2)
-        )
-        self.manager.sync_satiation_timer()
 
         happy_gain = self.config.get("tama_play_happiness", 1.0)
         max_happy = self.config.get("tama_happiness_max", 10)

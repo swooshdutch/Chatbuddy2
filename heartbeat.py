@@ -82,7 +82,15 @@ class HeartbeatManager:
         try:
             from gemini_api import generate  # lazy to avoid circular import
             tama_manager = getattr(self.bot, "tama_manager", None)
-            if self.config.get("tama_enabled", False) and tama_manager:
+            last_msg = None
+            async for msg in channel.history(limit=1):
+                last_msg = msg
+            if (
+                self.config.get("tama_enabled", False)
+                and tama_manager
+                and last_msg is not None
+                and last_msg.author != self.bot.user
+            ):
                 tama_manager.record_interaction()
 
             # Gather recent channel context

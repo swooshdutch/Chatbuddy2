@@ -1,6 +1,6 @@
 # ChatBuddy v3.1
 
-ChatBuddy is a Discord chatbot powered by Google Gemini, Gemma-compatible endpoints, or custom external models. It supports normal mention/reply chat, auto-chat, heartbeat posting, reminders, revival behavior, audio replies, soul memory, stream-of-consciousness logging, and a fully configurable Tamagotchi system with buttons, sleep, dirtiness, satiation, sickness, energy, and mobile-friendly public stat footers.
+ChatBuddy is a Discord chatbot powered by Google Gemini, Gemma-compatible endpoints, or custom external models. It supports normal mention/reply chat, auto-chat, heartbeat posting, reminders, revival behavior, audio replies, soul memory, stream-of-consciousness logging, and a fully configurable Tamagotchi system with buttons, sleep, dirtiness, sickness, energy-linked hunger/thirst, loneliness-based happiness decay, and mobile-friendly public stat footers.
 
 ---
 
@@ -200,17 +200,16 @@ The Tamagotchi system is fully script-driven. The LLM is informed of current sta
 |---|---|
 | `/set-tama-mode` | Enable or disable Tamagotchi mode |
 | `/set-tamagotchi-mode` | Alias for enabling or disabling Tamagotchi mode |
-| `/set-tama-hunger` | Set max hunger and depletion per inference |
-| `/set-tama-thirst` | Set max thirst and depletion per inference |
-| `/set-tama-happiness` | Set max happiness, base depletion, and extra low-need happiness loss |
+| `/set-tama-hunger` | Set max hunger and hunger loss per configured energy step |
+| `/set-tama-thirst` | Set max thirst and thirst loss per configured energy step |
+| `/set-tama-happiness` | Set max happiness plus loneliness loss amount and interval |
 | `/set-tama-health` | Set max health, sickness threshold, and damage per low stat |
-| `/set-tama-satiation` | Set max satiation, timer interval, timer tick-down amount, food/drink satiation gain, and inference depletion |
-| `/set-tama-energy` | Set max energy, API/game depletion, idle recharge interval, and idle recharge amount |
+| `/set-tama-energy` | Set max energy, API/game depletion, the energy step used for hunger/thirst loss, idle recharge interval, and idle recharge amount |
 | `/set-tama-rest` | Set sleep duration and rest button cooldown |
 | `/set-tama-hatch-time` | Set how long the egg takes to hatch |
 | `/set-tama-hatch-prompt` | Set the hidden prompt the bot receives when the egg hatches |
 | `/set-tama-dirt` | Set max dirt, food threshold for poop timers, poop timer max length, sickness grace time, and extra sick damage per poop |
-| `/set-tama-sickness` | Set health damage per turn while sick and the sickness happiness multiplier |
+| `/set-tama-sickness` | Set health damage per turn while sick |
 
 #### Button Configuration
 
@@ -218,10 +217,10 @@ The Tamagotchi system is fully script-driven. The LLM is informed of current sta
 |---|---|
 | `/set-tama-feed` | Set hunger restored and cooldown for Feed |
 | `/set-tama-drink` | Set thirst restored and cooldown for Drink |
-| `/add-tama-item` | Add or update a Tamagotchi inventory item, including multiplier, stock, emoji, button color, happiness amount, and Lucky Gift pool membership |
+| `/add-tama-item` | Add or update a Tamagotchi inventory item, including fill multiplier, energy multiplier, stock, emoji, button color, happiness amount, and Lucky Gift pool membership |
 | `/show-tama-items` | Show all configured Tamagotchi inventory items and current stock |
 | `/remove-tama-item` | Remove a Tamagotchi inventory item |
-| `/set-tama-play` | Set happiness gain, hunger/thirst loss, satiation loss, and cooldown for Play |
+| `/set-tama-play` | Set happiness gain and cooldown for Play |
 | `/set-tama-lucky-gift` | Set Lucky Gift cooldown, reveal countdown, and misc item cooldown |
 | `/set-tama-medicate` | Set cooldown, HP heal amount, and happiness cost for Medicate |
 | `/set-tama-clean` | Set cooldown for Clean |
@@ -238,7 +237,6 @@ The Tamagotchi system is fully script-driven. The LLM is informed of current sta
 | `/set-resp-clean` | Message shown when poop is cleaned |
 | `/set-resp-clean-none` | Ephemeral error when there is nothing to clean |
 | `/set-resp-poop` | Script-only message shown when a poop timer pops |
-| `/set-resp-full` | Ephemeral error when the bot is fully satiated |
 | `/set-resp-cooldown` | Ephemeral cooldown error. Supports `{time}` |
 | `/set-resp-rest` | Message shown when the bot starts resting |
 | `/set-resp-sleeping` | Public sleeping reply while rest is active. Supports `{time}` |
@@ -260,26 +258,26 @@ The Tamagotchi system is fully script-driven. The LLM is informed of current sta
 3. While the egg is hatching, users cannot chat with the bot. The egg message shows a live countdown, and when it reaches zero the bot receives a hidden configurable hatch prompt and sends its first public message.
 4. A newly hatched bot starts with full health, but hunger, thirst, and happiness begin at 50% of their configured max values.
 5. Public bot messages use the compact quoted stat footer as the visible stat display. Happiness uses a dynamic emoji based on its current percent, and a skull icon appears whenever the bot is sick.
-6. Inventory, Play, Medicate, Clean, and Rest buttons are attached to public Tamagotchi messages.
+6. Inventory and Play are always attached to public Tamagotchi messages. Medicate only appears while sick, Clean only appears while dirty, and Rest appears when energy is below `1`.
 7. Pressing Play now opens a user-only game menu with one button per game.
 8. Rock-Paper-Scissors remains available from that menu. Intermediate choices stay private to the player; the final result is public.
 9. Lucky Gift is also available from the game menu. It has its own configurable cooldown and reveal timer, shows a live countdown, and then awards a random configured prize from the Lucky Gift pool.
-10. Food, drink, and misc items are consumed from the user-only inventory menu. Each inventory item has its own emoji, button color, stock amount, fill multiplier, and optional happiness value.
+10. Food, drink, and misc items are consumed from the user-only inventory menu. Each inventory item has its own emoji, button color, stock amount, fill multiplier, energy multiplier, and optional happiness value.
 11. Misc items use their own configurable cooldown so things like teddy bears can be used without sharing the food or drink timers.
-12. Feed and Drink effects still share the existing global food and drink cooldowns. When satiation reaches max, eating and drinking are blocked until the satiation timer ticks it back down.
-13. Rock-Paper-Scissors play still reduces satiation by a configurable amount.
+12. Feed and Drink effects still share the existing global food and drink cooldowns. Hunger and thirst no longer drain per turn; they drain only when energy is spent.
+13. Rock-Paper-Scissors no longer applies its own hunger or thirst loss. Only energy is spent, and hunger/thirst follow from that energy loss.
 14. Energy decreases on API use and games. When energy reaches `0`, play is blocked and stat loss is doubled until the bot rests.
 15. Rest only appears when energy is below `1`. While sleeping, the bot refuses normal chat, auto-chat, heartbeat, and revival, but reminders still fire.
 16. If the bot is left alone, passive energy recharge restores energy after a configurable inactivity period.
-17. Any interaction resets the passive recharge timer, including mentions, replies, games, inventory use, clean/medicate/rest, reminders, heartbeat, auto-chat, and revival.
-18. Hunger and thirst below the configured low-need threshold each apply extra happiness loss every turn.
-19. When the bot is sick, its happiness loss is multiplied by the configured sickness multiplier and sickness also drains HP every turn.
+17. Any real interaction resets both the passive recharge timer and the loneliness timer, including mentions, replies, games, inventory use, clean/medicate/rest, and any auto-chat or heartbeat cycle whose latest context message came from someone other than the bot itself.
+18. Happiness no longer drains per turn. Instead it drops by the configured amount each time the configured loneliness interval passes without interaction.
+19. When the bot is sick, sickness drains HP every turn.
 20. Medicine is allowed while the bot is sick or while health is below max. It cures sickness, restores configurable HP, and costs configurable happiness.
 21. Dirt no longer appears instantly. After the configured food threshold is reached, one or more hidden poop timers are queued. Each timer picks a random whole-minute delay from `1` up to the configured max and posts a script-only poop message when it pops.
 22. Uncleaned dirt gets a grace period. If poop is not cleaned before that timer expires, the bot becomes sick.
 23. Health drops when core stats are below threshold and when sickness is active. While sick, each poop adds extra per-turn health damage on top of the normal sickness damage.
 24. If health reaches `0`, the Tamagotchi dies, soul memory is wiped, `[ce]` is broadcast, and a fresh egg starts hatching.
-25. Error messages such as cooldown, satiated, healthy/full-health medicine rejection, already clean, and no-energy are ephemeral and only shown to the user who triggered them.
+25. Error messages such as cooldown, healthy/full-health medicine rejection, already clean, and no-energy are ephemeral and only shown to the user who triggered them.
 26. The visible public stat footer is stripped from stored chat context before messages are sent back to the LLM, which avoids wasting tokens and prevents hallucinated self-reported stats.
 
 ---

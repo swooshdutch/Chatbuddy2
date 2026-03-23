@@ -143,7 +143,7 @@ def _format_tama_item_summary(item: dict) -> str:
     parts = [
         f"{item.get('emoji', '')} **{item.get('name', item.get('id', 'item'))}** "
         f"(`{item.get('id', '')}`) - {item.get('item_type', 'food')}, "
-        f"multiplier x{item.get('multiplier', 1.0)}, {stock}, {color_name} button"
+        f"fill x{item.get('multiplier', 1.0)}, energy x{item.get('energy_multiplier', 1.0)}, {stock}, {color_name} button"
     ]
     happiness_delta = float(item.get("happiness_delta", 0.0) or 0.0)
     if happiness_delta:
@@ -1646,7 +1646,7 @@ async def set_tamagotchi_mode(interaction: discord.Interaction, enabled: bool):
 
 
 @bot.tree.command(name="set-tama-hunger", description="Configure the hunger stat")
-@app_commands.describe(max="Maximum hunger value", depletion="Hunger lost per LLM turn")
+@app_commands.describe(max="Maximum hunger value", depletion="Hunger lost per configured energy step")
 @app_commands.default_permissions(administrator=True)
 async def set_tama_hunger(interaction: discord.Interaction, max: int, depletion: float):
     if max < 1:
@@ -1656,12 +1656,12 @@ async def set_tama_hunger(interaction: discord.Interaction, max: int, depletion:
     bot_config["tama_hunger_depletion"] = depletion
     save_config(bot_config)
     await interaction.response.send_message(
-        f"✅ Hunger: max **{max}**, depletion **{depletion}**/turn.", ephemeral=True
+        f"✅ Hunger: max **{max}**, depletion **{depletion}** per configured energy step.", ephemeral=True
     )
 
 
 @bot.tree.command(name="set-tama-thirst", description="Configure the thirst stat")
-@app_commands.describe(max="Maximum thirst value", depletion="Thirst lost per LLM turn")
+@app_commands.describe(max="Maximum thirst value", depletion="Thirst lost per configured energy step")
 @app_commands.default_permissions(administrator=True)
 async def set_tama_thirst(interaction: discord.Interaction, max: int, depletion: float):
     if max < 1:
@@ -1671,39 +1671,37 @@ async def set_tama_thirst(interaction: discord.Interaction, max: int, depletion:
     bot_config["tama_thirst_depletion"] = depletion
     save_config(bot_config)
     await interaction.response.send_message(
-        f"✅ Thirst: max **{max}**, depletion **{depletion}**/turn.", ephemeral=True
+        f"✅ Thirst: max **{max}**, depletion **{depletion}** per configured energy step.", ephemeral=True
     )
 
 
 @bot.tree.command(name="set-tama-happiness", description="Configure the happiness stat")
 @app_commands.describe(
     max="Maximum happiness value",
-    depletion="Base happiness lost per LLM turn",
-    low_need_threshold="Hunger or thirst below this adds extra happiness loss",
-    low_need_penalty="Extra happiness lost per low need each turn",
+    depletion="Happiness lost each loneliness interval",
+    interval_minutes="Minutes without interaction before the loneliness loss applies",
 )
 @app_commands.default_permissions(administrator=True)
 async def set_tama_happiness(
     interaction: discord.Interaction,
     max: int,
     depletion: float,
-    low_need_threshold: float,
-    low_need_penalty: float,
+    interval_minutes: float,
 ):
     if max < 1:
         await interaction.response.send_message("⚠️ Max must be at least 1.", ephemeral=True)
         return
-    if low_need_threshold < 0 or low_need_penalty < 0:
-        await interaction.response.send_message("⚠️ Threshold and penalty must be ≥ 0.", ephemeral=True)
+    if depletion < 0 or interval_minutes <= 0:
+        await interaction.response.send_message("⚠️ Depletion must be ≥ 0 and interval must be greater than 0.", ephemeral=True)
         return
     bot_config["tama_happiness_max"] = max
     bot_config["tama_happiness_depletion"] = depletion
-    bot_config["tama_happiness_low_need_threshold"] = low_need_threshold
-    bot_config["tama_happiness_low_need_penalty"] = low_need_penalty
+    bot_config["tama_happiness_depletion_interval"] = int(round(interval_minutes * 60))
     save_config(bot_config)
+    if tama_manager:
+        tama_manager.record_interaction(save=False)
     await interaction.response.send_message(
-        f"✅ Happiness: max **{max}**, base depletion **{depletion}**/turn, "
-        f"extra **{low_need_penalty}**/turn for each hunger/thirst stat below **{low_need_threshold}**.",
+        f"✅ Happiness: max **{max}**, loneliness loss **{depletion}** every **{interval_minutes:g}** minute(s) without interaction.",
         ephemeral=True
     )
 
@@ -1728,45 +1726,12 @@ async def set_tama_health(interaction: discord.Interaction, max: int, damage_per
     )
 
 
-@bot.tree.command(name="set-tama-satiation", description="Configure the satiation system")
-@app_commands.describe(
-    max="Maximum satiation before timer starts",
-    timer="Seconds between each satiation timer tick (default 300 = 5min)",
-    timer_decrease="How much satiation the timer removes each tick",
-    food_inc="Satiation gained per feed button press",
-    drink_inc="Satiation gained per drink button press",
-    depletion="Satiation decrease per LLM turn",
-)
-@app_commands.default_permissions(administrator=True)
-async def set_tama_satiation(
-    interaction: discord.Interaction,
-    max: int, timer: int, timer_decrease: float, food_inc: float, drink_inc: float, depletion: float,
-):
-    if max < 1:
-        await interaction.response.send_message("⚠️ Max must be at least 1.", ephemeral=True)
-        return
-    if timer < 1:
-        await interaction.response.send_message("⚠️ Timer must be at least 1 second.", ephemeral=True)
-        return
-    bot_config["tama_satiation_max"] = max
-    bot_config["tama_satiation_timer"] = timer
-    bot_config["tama_satiation_timer_decrease"] = timer_decrease
-    bot_config["tama_satiation_food_increase"] = food_inc
-    bot_config["tama_satiation_drink_increase"] = drink_inc
-    bot_config["tama_satiation_depletion"] = depletion
-    save_config(bot_config)
-    await interaction.response.send_message(
-        f"✅ Satiation: max **{max}**, timer **{timer}s**, "
-        f"tick **-{timer_decrease}**, food +**{food_inc}**, drink +**{drink_inc}**, depletion **{depletion}**/turn.",
-        ephemeral=True,
-    )
-
-
 @bot.tree.command(name="set-tama-energy", description="Configure the energy stat")
 @app_commands.describe(
     max="Maximum energy value",
     api_depletion="Energy lost per LLM API call",
     game_depletion="Energy lost per game played",
+    needs_every="For every this much energy spent, hunger/thirst lose their configured amounts",
     recharge_minutes="Minutes of no interaction before energy recharge ticks",
     recharge_amount="Energy restored each recharge tick",
 )
@@ -1776,6 +1741,7 @@ async def set_tama_energy(
     max: int,
     api_depletion: float,
     game_depletion: float,
+    needs_every: float,
     recharge_minutes: float,
     recharge_amount: float,
 ):
@@ -1788,19 +1754,23 @@ async def set_tama_energy(
     if recharge_amount < 0:
         await interaction.response.send_message("⚠️ Recharge amount must be ≥ 0.", ephemeral=True)
         return
+    if needs_every <= 0:
+        await interaction.response.send_message("⚠️ Needs trigger must be greater than 0.", ephemeral=True)
+        return
     recharge_interval_seconds = int(round(recharge_minutes * 60))
     if recharge_interval_seconds < 1:
         recharge_interval_seconds = 1
     bot_config["tama_energy_max"] = max
     bot_config["tama_energy_depletion_api"] = api_depletion
     bot_config["tama_energy_depletion_game"] = game_depletion
+    bot_config["tama_needs_depletion_per_energy"] = needs_every
     bot_config["tama_energy_recharge_interval"] = recharge_interval_seconds
     bot_config["tama_energy_recharge_amount"] = recharge_amount
     save_config(bot_config)
     if tama_manager:
         tama_manager.record_interaction(save=False)
     await interaction.response.send_message(
-        f"✅ Energy: max **{max}**, API **-{api_depletion}**, game **-{game_depletion}**, "
+        f"✅ Energy: max **{max}**, API **-{api_depletion}**, game **-{game_depletion}**, needs trigger **{needs_every:g}** energy, "
         f"recharge **+{recharge_amount}** every **{recharge_minutes:g}m** of inactivity.",
         ephemeral=True,
     )
@@ -1896,18 +1866,13 @@ async def set_tama_dirt(
 @bot.tree.command(name="set-tama-sickness", description="Configure sickness damage")
 @app_commands.describe(
     health_damage="HP lost per LLM turn while sick",
-    happiness_multiplier="Multiplier for happiness loss while sick",
 )
 @app_commands.default_permissions(administrator=True)
-async def set_tama_sickness(interaction: discord.Interaction, health_damage: float, happiness_multiplier: float):
-    if happiness_multiplier < 1:
-        await interaction.response.send_message("⚠️ Happiness multiplier must be at least 1.", ephemeral=True)
-        return
+async def set_tama_sickness(interaction: discord.Interaction, health_damage: float):
     bot_config["tama_sick_health_damage"] = health_damage
-    bot_config["tama_sick_happiness_multiplier"] = happiness_multiplier
     save_config(bot_config)
     await interaction.response.send_message(
-        f"✅ Sickness: **{health_damage}** HP/turn while sick, happiness loss x**{happiness_multiplier}**.",
+        f"✅ Sickness: **{health_damage}** HP/turn while sick.",
         ephemeral=True
     )
 
@@ -1990,6 +1955,7 @@ async def set_tama_drink(
     item_type="Whether this item is food, drink, or misc",
     emoji="Emoji shown on the inventory button and public response",
     multiplier="Fill multiplier based on the configured feed/drink amount",
+    energy_multiplier="Energy multiplier based on the configured feed/drink energy gain",
     happiness_amount="Happiness granted or removed when this item is won from Lucky Gift",
     button_color="Discord button color for the inventory item",
     amount="Starting amount for limited items",
@@ -2017,6 +1983,7 @@ async def add_tama_item(
     item_type: app_commands.Choice[str],
     emoji: str,
     multiplier: float,
+    energy_multiplier: float,
     happiness_amount: float,
     button_color: app_commands.Choice[str],
     amount: int = 0,
@@ -2027,6 +1994,9 @@ async def add_tama_item(
     ensure_inventory_defaults(bot_config)
     if multiplier < 0:
         await interaction.response.send_message("⚠️ Multiplier must be ≥ 0.", ephemeral=True)
+        return
+    if energy_multiplier < 0:
+        await interaction.response.send_message("⚠️ Energy multiplier must be ≥ 0.", ephemeral=True)
         return
     if not unlimited and amount < 0:
         await interaction.response.send_message("⚠️ Limited items must start with 0 or more in stock.", ephemeral=True)
@@ -2039,6 +2009,7 @@ async def add_tama_item(
         "emoji": emoji.strip() or ("🍔" if item_type.value == "food" else ("🥤" if item_type.value == "drink" else "🎁")),
         "item_type": item_type.value,
         "multiplier": round(multiplier, 2),
+        "energy_multiplier": round(energy_multiplier, 2),
         "happiness_delta": round(happiness_amount, 2),
         "button_style": button_color.value,
         "amount": -1 if unlimited else amount,
@@ -2089,31 +2060,21 @@ async def remove_tama_item(interaction: discord.Interaction, name_or_id: str):
 @bot.tree.command(name="set-tama-play", description="Configure the play button")
 @app_commands.describe(
     happiness="Happiness gained per play",
-    hunger_loss="Hunger lost per play",
-    thirst_loss="Thirst lost per play",
-    satiation_loss="Satiation lost per play",
     cooldown="Cooldown in seconds",
 )
 @app_commands.default_permissions(administrator=True)
 async def set_tama_play(
     interaction: discord.Interaction,
-    happiness: float, hunger_loss: float, thirst_loss: float, satiation_loss: float, cooldown: int,
+    happiness: float, cooldown: int,
 ):
     if cooldown < 0:
         await interaction.response.send_message("⚠️ Cooldown must be ≥ 0.", ephemeral=True)
         return
-    if satiation_loss < 0:
-        await interaction.response.send_message("⚠️ Satiation loss must be ≥ 0.", ephemeral=True)
-        return
     bot_config["tama_play_happiness"] = happiness
-    bot_config["tama_play_hunger_loss"] = hunger_loss
-    bot_config["tama_play_thirst_loss"] = thirst_loss
-    bot_config["tama_play_satiation_loss"] = satiation_loss
     bot_config["tama_cd_play"] = cooldown
     save_config(bot_config)
     await interaction.response.send_message(
-        f"✅ Play: +**{happiness}** 😊, -**{hunger_loss}** 🍔, -**{thirst_loss}** 🥤, "
-        f"-**{satiation_loss}** 🤰, **{cooldown}s** cd.",
+        f"✅ Play: +**{happiness}** happiness, **{cooldown}s** cooldown. Hunger and thirst now drain only from energy use.",
         ephemeral=True,
     )
 
@@ -2281,15 +2242,6 @@ async def set_resp_poop(interaction: discord.Interaction, message: str):
     await interaction.response.send_message("✅ Poop response set.", ephemeral=True)
 
 
-@bot.tree.command(name="set-resp-full", description="Set the error message when the bot is satiated")
-@app_commands.describe(message="Ephemeral message shown when trying to feed/drink a full bot")
-@app_commands.default_permissions(administrator=True)
-async def set_resp_full(interaction: discord.Interaction, message: str):
-    bot_config["tama_resp_full"] = message
-    save_config(bot_config)
-    await interaction.response.send_message("✅ Satiation error response set.", ephemeral=True)
-
-
 @bot.tree.command(name="set-resp-cooldown", description="Set the cooldown error message (use {time} placeholder)")
 @app_commands.describe(message="Message shown on cooldown. Use {time} for countdown.")
 @app_commands.default_permissions(administrator=True)
@@ -2331,8 +2283,9 @@ async def set_resp_no_energy(interaction: discord.Interaction, message: str):
 @bot.tree.command(name="show-tama-stats", description="View all current Tamagotchi stats and config")
 @app_commands.default_permissions(administrator=True)
 async def show_tama_stats(interaction: discord.Interaction):
-    from tamagotchi import _fs
+    from tamagotchi import _fs, apply_loneliness
     c = bot_config
+    apply_loneliness(c, save=True)
     ensure_inventory_defaults(c)
     inventory_items = get_inventory_items(c, visible_only=False)
     inventory_lines = "\n".join(f"• {_format_tama_item_summary(item)}" for item in inventory_items) if inventory_items else "• No items configured"
@@ -2345,35 +2298,30 @@ async def show_tama_stats(interaction: discord.Interaction):
         f"🐣 **Tamagotchi Status** — {enabled}\n\n"
         f"**Stats:**\n"
         f"• 🍔 Hunger: {_fs(c.get('tama_hunger', 0))}/{c.get('tama_hunger_max', 10)}"
-        f"  (-{c.get('tama_hunger_depletion', 0.2)}/turn)\n"
+        f"  (-{c.get('tama_hunger_depletion', 1.1)} per {c.get('tama_needs_depletion_per_energy', 1.0):g} energy)\n"
         f"• 🥤 Thirst: {_fs(c.get('tama_thirst', 0))}/{c.get('tama_thirst_max', 10)}"
-        f"  (-{c.get('tama_thirst_depletion', 0.3)}/turn)\n"
+        f"  (-{c.get('tama_thirst_depletion', 1.8)} per {c.get('tama_needs_depletion_per_energy', 1.0):g} energy)\n"
         f"• 😊 Happiness: {_fs(c.get('tama_happiness', 0))}/{c.get('tama_happiness_max', 10)}"
-        f"  (-{c.get('tama_happiness_depletion', 0.1)}/turn base, "
-        f"-{c.get('tama_happiness_low_need_penalty', 0.1)}/low need below {c.get('tama_happiness_low_need_threshold', 5.0)})\n"
+        f"  (-{c.get('tama_happiness_depletion', 0.1)} every {c.get('tama_happiness_depletion_interval', 600)}s without interaction)\n"
         f"• ❤️ Health: {_fs(c.get('tama_health', 0))}/{c.get('tama_health_max', 10)}"
         f"  (threshold: {c.get('tama_health_threshold', 2.0)}, dmg/stat: {c.get('tama_health_damage_per_stat', 1.0)})\n"
-        f"• 🤰 Satiation: {_fs(c.get('tama_satiation', 0))}/{c.get('tama_satiation_max', 10)}"
-        f"  (timer: {c.get('tama_satiation_timer', 300)}s, tick: -{c.get('tama_satiation_timer_decrease', 1.0)})\n"
         f"• ⚡ Energy: {_fs(c.get('tama_energy', 0))}/{c.get('tama_energy_max', 10)}"
-        f"  (API: -{c.get('tama_energy_depletion_api', 0.1)}, game: -{c.get('tama_energy_depletion_game', 0.2)}, "
+        f"  (API: -{c.get('tama_energy_depletion_api', 0.1)}, game: -{c.get('tama_energy_depletion_game', 0.5)}, "
         f"recharge: +{c.get('tama_energy_recharge_amount', 0.5)} every {c.get('tama_energy_recharge_interval', 300)}s idle)\n"
         f"• 💩 Dirt: {c.get('tama_dirt', 0)}/{c.get('tama_dirt_max', 4)}"
         f"  (queue timer every {c.get('tama_dirt_food_threshold', 5)} food, counter: {c.get('tama_dirt_food_counter', 0)}, "
         f"timer max: {c.get('tama_dirt_poop_timer_max_minutes', 5)}m, "
         f"sick after {c.get('tama_dirt_damage_interval', 600)}s, "
         f"+{c.get('tama_dirt_health_damage', 0.5)} dmg/poop while sick)\n"
-        f"• 💀 Sick: {sick} (dmg: {c.get('tama_sick_health_damage', 0.5)}/turn, "
-        f"happiness x{c.get('tama_sick_happiness_multiplier', 2.0)})\n"
+        f"• 💀 Sick: {sick} (dmg: {c.get('tama_sick_health_damage', 0.5)}/turn)\n"
         f"• 🥚 Hatching: {hatching} (duration: {c.get('tama_egg_hatch_time', 30)}s)\n\n"
         f"**Feed / Drink Energy:**\n"
-        f"• Feed: +{c.get('tama_feed_energy_gain', 0.2)} energy every {c.get('tama_feed_energy_every', 3)} feeds "
+        f"• Feed: +{c.get('tama_feed_energy_gain', 0.1)} energy every {c.get('tama_feed_energy_every', 1)} feeds "
         f"(counter: {c.get('tama_feed_energy_counter', 0)})\n"
-        f"• Drink: +{c.get('tama_drink_energy_gain', 0.1)} energy every {c.get('tama_drink_energy_every', 3)} drinks "
+        f"• Drink: +{c.get('tama_drink_energy_gain', 0.05)} energy every {c.get('tama_drink_energy_every', 1)} drinks "
         f"(counter: {c.get('tama_drink_energy_counter', 0)})\n\n"
         f"**Play Effects:**\n"
-        f"• Happiness +{c.get('tama_play_happiness', 1.0)} | Hunger -{c.get('tama_play_hunger_loss', 0.4)} | "
-        f"Thirst -{c.get('tama_play_thirst_loss', 0.2)} | Satiation -{c.get('tama_play_satiation_loss', 0.5)}\n"
+        f"• Happiness +{c.get('tama_play_happiness', 1.0)}\n"
         f"**Lucky Gift:**\n"
         f"• Cooldown: {c.get('tama_cd_lucky_gift', 600)}s | Reveal timer: {c.get('tama_lucky_gift_duration', 30)}s | Other-item cooldown: {c.get('tama_cd_other', 60)}s\n"
         f"**Medicine:**\n"
@@ -2398,7 +2346,6 @@ async def show_tama_stats(interaction: discord.Interaction):
     happiness="Current happiness value",
     health="Current health value",
     energy="Current energy value",
-    satiation="Current satiation value",
     dirt="Current dirt value",
     sick="Whether the bot is currently sick",
 )
@@ -2410,7 +2357,6 @@ async def dev_set_stats(
     happiness: float | None = None,
     health: float | None = None,
     energy: float | None = None,
-    satiation: float | None = None,
     dirt: int | None = None,
     sick: bool | None = None,
 ):
@@ -2424,8 +2370,6 @@ async def dev_set_stats(
         bot_config["tama_health"] = max(0.0, min(float(bot_config.get("tama_health_max", 10)), round(health, 2)))
     if energy is not None:
         bot_config["tama_energy"] = max(0.0, min(float(bot_config.get("tama_energy_max", 10)), round(energy, 2)))
-    if satiation is not None:
-        bot_config["tama_satiation"] = max(0.0, min(float(bot_config.get("tama_satiation_max", 10)), round(satiation, 2)))
     if dirt is not None:
         bot_config["tama_dirt"] = max(0, min(int(bot_config.get("tama_dirt_max", 4)), dirt))
     if sick is not None:
@@ -2726,14 +2670,14 @@ async def help_command(interaction: discord.Interaction):
         name="Tamagotchi",
         value=(
             "**Stats:** `/set-tama-hunger` `/set-tama-thirst` `/set-tama-happiness` "
-            "`/set-tama-health` `/set-tama-satiation` `/set-tama-energy` `/set-tama-dirt` "
+            "`/set-tama-health` `/set-tama-energy` `/set-tama-dirt` "
             "`/set-tama-sickness` `/set-tama-rest` `/set-tama-hatch-time` `/set-tama-hatch-prompt`\n"
             "**Buttons:** `/set-tama-feed` `/set-tama-drink` `/set-tama-play` "
             "`/set-tama-lucky-gift` `/set-tama-medicate` `/set-tama-clean`\n"
             "**Inventory:** `/add-tama-item` `/show-tama-items` `/remove-tama-item`\n"
             "**Responses:** `/set-resp-food` `/set-resp-drink` `/set-resp-play` "
             "`/set-resp-medicate` `/set-resp-medicate-healthy` `/set-resp-clean` "
-            "`/set-resp-clean-none` `/set-resp-poop` `/set-resp-full` `/set-resp-cooldown` "
+            "`/set-resp-clean-none` `/set-resp-poop` `/set-resp-cooldown` "
             "`/set-resp-rest` `/set-resp-sleeping` `/set-resp-no-energy`"
         ),
         inline=False,
@@ -2749,8 +2693,9 @@ async def help_command(interaction: discord.Interaction):
             "`/dev-set-stats` - Set current stats directly for testing\n"
             "`/reset-tama-stats` - Reset the pet / start a new egg\n\n"
             "Setup, reset, and death can start a new egg hatch. While hatching, chat is blocked. "
-            "Footer mood is dynamic, the skull appears while sick, medicine heals/cures, Lucky Gift can award "
-            "inventory items and happiness changes, inventory food can queue randomized poop timers, and rest appears below 1 energy."
+            "Hunger and thirst now drain from energy use instead of per turn, happiness drains only from loneliness, "
+            "medicine and clean only appear when relevant, Lucky Gift can award inventory items and happiness changes, "
+            "inventory food can queue randomized poop timers, and rest appears below 1 energy."
         ),
         inline=False,
     )
