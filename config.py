@@ -128,6 +128,25 @@ DEFAULTS = {
         "Send your very first message to the server."
     ),
     "tama_action_log": [],
+    "tama_inventory_initialized": False,
+    "tama_inventory_items": {
+        "unlimited_hamburger": {
+            "name": "Hamburger",
+            "emoji": "🍔",
+            "item_type": "food",
+            "multiplier": 1.0,
+            "button_style": "success",
+            "amount": -1,
+        },
+        "unlimited_water": {
+            "name": "Cup of Water",
+            "emoji": "🥤",
+            "item_type": "drink",
+            "multiplier": 1.0,
+            "button_style": "primary",
+            "amount": -1,
+        },
+    },
     # Dirtiness / poop
     "tama_dirt": 0,
     "tama_dirt_max": 4,

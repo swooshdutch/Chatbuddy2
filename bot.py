@@ -28,7 +28,8 @@ from tamagotchi import (
     TamagotchiManager, TamagotchiView,
     append_tamagotchi_footer, build_sleeping_message, is_sleeping,
     build_hatching_message, is_hatching, reset_tamagotchi_state,
-    wipe_soul_file,
+    wipe_soul_file, ensure_inventory_defaults, get_inventory_items,
+    inventory_item_id_from_name, BUTTON_STYLE_LABELS,
 )
 
 # ---------------------------------------------------------------------------
@@ -136,6 +137,24 @@ def _build_tama_view():
     return None
 
 
+def _format_tama_item_summary(item: dict) -> str:
+    stock = "unlimited" if item.get("is_unlimited") else f"x{item.get('amount', 0)}"
+    color_name = BUTTON_STYLE_LABELS.get(item.get("button_style", "secondary"), item.get("button_style", "secondary"))
+    return (
+        f"{item.get('emoji', '')} **{item.get('name', item.get('id', 'item'))}** "
+        f"(`{item.get('id', '')}`) - {item.get('item_type', 'food')}, "
+        f"multiplier x{item.get('multiplier', 1.0)}, {stock}, {color_name} button"
+    )
+
+
+def _resolve_tama_item_id(name_or_id: str) -> str | None:
+    needle = inventory_item_id_from_name(name_or_id)
+    for item in get_inventory_items(bot_config, visible_only=False):
+        if item["id"] == needle or item["name"].strip().lower() == name_or_id.strip().lower():
+            return item["id"]
+    return None
+
+
 def _tama_hatching_active() -> bool:
     return bool(bot_config.get("tama_enabled", False)) and (
         (tama_manager.hatching if tama_manager else False) or is_hatching(bot_config)
@@ -192,6 +211,8 @@ bot.tree.interaction_check = _command_access_check
 async def on_ready():
     global bot_config, revival_manager, auto_chat_manager, reminder_manager, heartbeat_manager, tama_manager
     bot_config = load_config()
+    if ensure_inventory_defaults(bot_config):
+        save_config(bot_config)
     if not bot_config.get("bot_owner_id") and SETUP_BOT_OWNER_ID:
         bot_config["bot_owner_id"] = SETUP_BOT_OWNER_ID
         save_config(bot_config)
@@ -1955,6 +1976,98 @@ async def set_tama_drink(
     )
 
 
+@bot.tree.command(name="add-tama-item", description="Add or update a Tamagotchi inventory item")
+@app_commands.describe(
+    name="Display name for the inventory item",
+    item_type="Whether this item is food or drink",
+    emoji="Emoji shown on the inventory button and public response",
+    multiplier="Fill multiplier based on the configured feed/drink amount",
+    button_color="Discord button color for the inventory item",
+    amount="Starting amount for limited items",
+    unlimited="Set true for infinite stock",
+)
+@app_commands.choices(
+    item_type=[
+        app_commands.Choice(name="food", value="food"),
+        app_commands.Choice(name="drink", value="drink"),
+    ],
+    button_color=[
+        app_commands.Choice(name="blue", value="primary"),
+        app_commands.Choice(name="gray", value="secondary"),
+        app_commands.Choice(name="green", value="success"),
+        app_commands.Choice(name="red", value="danger"),
+    ],
+)
+@app_commands.default_permissions(administrator=True)
+async def add_tama_item(
+    interaction: discord.Interaction,
+    name: str,
+    item_type: app_commands.Choice[str],
+    emoji: str,
+    multiplier: float,
+    button_color: app_commands.Choice[str],
+    amount: int = 1,
+    unlimited: bool = False,
+):
+    ensure_inventory_defaults(bot_config)
+    if multiplier < 0:
+        await interaction.response.send_message("⚠️ Multiplier must be ≥ 0.", ephemeral=True)
+        return
+    if not unlimited and amount < 1:
+        await interaction.response.send_message("⚠️ Limited items must start with at least 1 in stock.", ephemeral=True)
+        return
+
+    item_id = inventory_item_id_from_name(name)
+    bot_config.setdefault("tama_inventory_items", {})
+    bot_config["tama_inventory_items"][item_id] = {
+        "name": name.strip() or "Item",
+        "emoji": emoji.strip() or ("🍔" if item_type.value == "food" else "🥤"),
+        "item_type": item_type.value,
+        "multiplier": round(multiplier, 2),
+        "button_style": button_color.value,
+        "amount": -1 if unlimited else amount,
+    }
+    save_config(bot_config)
+    stored_item = next((item for item in get_inventory_items(bot_config, visible_only=False) if item["id"] == item_id), None)
+    await interaction.response.send_message(
+        "✅ Tamagotchi inventory item saved:\n" + _format_tama_item_summary(stored_item or {"id": item_id, "name": name}),
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="show-tama-items", description="Show all Tamagotchi inventory items")
+@app_commands.default_permissions(administrator=True)
+async def show_tama_items(interaction: discord.Interaction):
+    ensure_inventory_defaults(bot_config)
+    items = get_inventory_items(bot_config, visible_only=False)
+    visible_count = len(get_inventory_items(bot_config, visible_only=True))
+    lines = ["🎒 **Tamagotchi Inventory Items**"]
+    if items:
+        lines.extend(_format_tama_item_summary(item) for item in items)
+        lines.append(f"\nVisible in inventory right now: **{visible_count}**")
+    else:
+        lines.append("No items are configured.")
+    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+
+@bot.tree.command(name="remove-tama-item", description="Remove a Tamagotchi inventory item")
+@app_commands.describe(name_or_id="Item name or item id shown by /show-tama-items")
+@app_commands.default_permissions(administrator=True)
+async def remove_tama_item(interaction: discord.Interaction, name_or_id: str):
+    ensure_inventory_defaults(bot_config)
+    item_id = _resolve_tama_item_id(name_or_id)
+    if not item_id:
+        await interaction.response.send_message("⚠️ I couldn't find that item.", ephemeral=True)
+        return
+    removed = bot_config.get("tama_inventory_items", {}).pop(item_id, None)
+    save_config(bot_config)
+    removed_name = (removed or {}).get("name", item_id)
+    await interaction.response.send_message(
+        f"✅ Removed Tamagotchi inventory item **{removed_name}** (`{item_id}`).",
+        ephemeral=True,
+    )
+
+
 @bot.tree.command(name="set-tama-play", description="Configure the play button")
 @app_commands.describe(
     happiness="Happiness gained per play",
@@ -2170,6 +2283,9 @@ async def set_resp_no_energy(interaction: discord.Interaction, message: str):
 async def show_tama_stats(interaction: discord.Interaction):
     from tamagotchi import _fs
     c = bot_config
+    ensure_inventory_defaults(c)
+    inventory_items = get_inventory_items(c, visible_only=False)
+    inventory_lines = "\n".join(f"• {_format_tama_item_summary(item)}" for item in inventory_items) if inventory_items else "• No items configured"
 
     enabled = "✅ Enabled" if c.get("tama_enabled", False) else "❌ Disabled"
     sick = "**YES** 💀" if c.get("tama_sick", False) else "No"
@@ -2215,7 +2331,9 @@ async def show_tama_stats(interaction: discord.Interaction):
         f"**Button Cooldowns:**\n"
         f"• Feed: {c.get('tama_cd_feed', 60)}s | Drink: {c.get('tama_cd_drink', 60)}s | "
         f"Play: {c.get('tama_cd_play', 60)}s | Medicate: {c.get('tama_cd_medicate', 60)}s | "
-        f"Clean: {c.get('tama_cd_clean', 60)}s | Rest: {c.get('tama_cd_rest', 60)}s"
+        f"Clean: {c.get('tama_cd_clean', 60)}s | Rest: {c.get('tama_cd_rest', 60)}s\n\n"
+        f"**Inventory Items:**\n"
+        f"{inventory_lines}"
     )
     await interaction.response.send_message(msg, ephemeral=True)
 
@@ -2559,6 +2677,7 @@ async def help_command(interaction: discord.Interaction):
             "`/set-tama-sickness` `/set-tama-rest` `/set-tama-hatch-time` `/set-tama-hatch-prompt`\n"
             "**Buttons:** `/set-tama-feed` `/set-tama-drink` `/set-tama-play` "
             "`/set-tama-medicate` `/set-tama-clean`\n"
+            "**Inventory:** `/add-tama-item` `/show-tama-items` `/remove-tama-item`\n"
             "**Responses:** `/set-resp-food` `/set-resp-drink` `/set-resp-play` "
             "`/set-resp-medicate` `/set-resp-medicate-healthy` `/set-resp-clean` "
             "`/set-resp-clean-none` `/set-resp-poop` `/set-resp-full` `/set-resp-cooldown` "
@@ -2573,10 +2692,11 @@ async def help_command(interaction: discord.Interaction):
             "`/set-tama-rip-message` - Custom death message\n"
             "`/set-tama-mode` and `/set-tamagotchi-mode` - Enable or disable\n"
             "`/show-tama-stats` - View all stats and config\n"
+            "`/show-tama-items` - View current item list and stock\n"
             "`/dev-set-stats` - Set current stats directly for testing\n"
             "`/reset-tama-stats` - Reset the pet / start a new egg\n\n"
             "Setup, reset, and death can start a new egg hatch. While hatching, chat is blocked. "
-            "Footer mood is dynamic, the skull appears while sick, medicine heals/cures, feeding "
+            "Footer mood is dynamic, the skull appears while sick, medicine heals/cures, inventory food "
             "can queue randomized poop timers, and rest appears below 1 energy."
         ),
         inline=False,

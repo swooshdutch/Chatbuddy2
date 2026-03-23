@@ -85,20 +85,21 @@ def _build_tamagotchi_action_summary(action_events: list[dict]) -> Optional[Cont
     if not action_events:
         return None
 
-    grouped: dict[tuple[str, str], int] = {}
+    grouped: dict[tuple[str, str, str], int] = {}
     for event in action_events:
         action = str(event.get("action", "")).strip()
         if action not in {"feed", "drink"}:
             continue
         user_name = str(event.get("user_name", "Unknown user")).strip() or "Unknown user"
-        grouped[(action, user_name)] = grouped.get((action, user_name), 0) + 1
+        item_name = str(event.get("item_name", "")).strip() or ("food" if action == "feed" else "drink")
+        grouped[(action, user_name, item_name)] = grouped.get((action, user_name, item_name), 0) + 1
 
     if not grouped:
         return None
 
     parts: list[str] = []
-    for (action, user_name), count in grouped.items():
-        noun = "food" if action == "feed" else "drink"
+    for (_, user_name, item_name), count in grouped.items():
+        noun = item_name.lower()
         parts.append(f"received {count}x {noun} from {user_name}")
 
     last_ts = max(float(event.get("timestamp", 0.0) or 0.0) for event in action_events)
