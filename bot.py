@@ -2297,35 +2297,35 @@ async def show_tama_stats(interaction: discord.Interaction):
     msg = (
         f"🐣 **Tamagotchi Status** — {enabled}\n\n"
         f"**Stats:**\n"
-        f"• 🍔 Hunger: {_fs(c.get('tama_hunger', 0))}/{c.get('tama_hunger_max', 10)}"
-        f"  (-{c.get('tama_hunger_depletion', 1.1)} per {c.get('tama_needs_depletion_per_energy', 1.0):g} energy)\n"
-        f"• 🥤 Thirst: {_fs(c.get('tama_thirst', 0))}/{c.get('tama_thirst_max', 10)}"
-        f"  (-{c.get('tama_thirst_depletion', 1.8)} per {c.get('tama_needs_depletion_per_energy', 1.0):g} energy)\n"
-        f"• 😊 Happiness: {_fs(c.get('tama_happiness', 0))}/{c.get('tama_happiness_max', 10)}"
-        f"  (-{c.get('tama_happiness_depletion', 0.1)} every {c.get('tama_happiness_depletion_interval', 600)}s without interaction)\n"
-        f"• ❤️ Health: {_fs(c.get('tama_health', 0))}/{c.get('tama_health_max', 10)}"
-        f"  (threshold: {c.get('tama_health_threshold', 2.0)}, dmg/stat: {c.get('tama_health_damage_per_stat', 1.0)})\n"
-        f"• ⚡ Energy: {_fs(c.get('tama_energy', 0))}/{c.get('tama_energy_max', 10)}"
-        f"  (API: -{c.get('tama_energy_depletion_api', 0.1)}, game: -{c.get('tama_energy_depletion_game', 0.5)}, "
-        f"recharge: +{c.get('tama_energy_recharge_amount', 0.5)} every {c.get('tama_energy_recharge_interval', 300)}s idle)\n"
+        f"• 🍔 Hunger: {_fs(c.get('tama_hunger', 0))}/{c.get('tama_hunger_max', 100)}"
+        f"  (-{c.get('tama_hunger_depletion', 1.0)} per {c.get('tama_needs_depletion_per_energy', 1.0):g} energy)\n"
+        f"• 🥤 Thirst: {_fs(c.get('tama_thirst', 0))}/{c.get('tama_thirst_max', 100)}"
+        f"  (-{c.get('tama_thirst_depletion', 1.0)} per {c.get('tama_needs_depletion_per_energy', 1.0):g} energy)\n"
+        f"• 😊 Happiness: {_fs(c.get('tama_happiness', 0))}/{c.get('tama_happiness_max', 100)}"
+        f"  (-{c.get('tama_happiness_depletion', 1.0)} every {c.get('tama_happiness_depletion_interval', 600)}s without interaction)\n"
+        f"• ❤️ Health: {_fs(c.get('tama_health', 0))}/{c.get('tama_health_max', 100)}"
+        f"  (threshold: {c.get('tama_health_threshold', 20.0)}, dmg/stat: {c.get('tama_health_damage_per_stat', 10.0)})\n"
+        f"• ⚡ Energy: {_fs(c.get('tama_energy', 0))}/{c.get('tama_energy_max', 100)}"
+        f"  (API: -{c.get('tama_energy_depletion_api', 1.0)}, game: -{c.get('tama_energy_depletion_game', 5.0)}, "
+        f"recharge: +{c.get('tama_energy_recharge_amount', 5.0)} every {c.get('tama_energy_recharge_interval', 300)}s idle)\n"
         f"• 💩 Dirt: {c.get('tama_dirt', 0)}/{c.get('tama_dirt_max', 4)}"
         f"  (queue timer every {c.get('tama_dirt_food_threshold', 5)} food, counter: {c.get('tama_dirt_food_counter', 0)}, "
         f"timer max: {c.get('tama_dirt_poop_timer_max_minutes', 5)}m, "
         f"sick after {c.get('tama_dirt_damage_interval', 600)}s, "
-        f"+{c.get('tama_dirt_health_damage', 0.5)} dmg/poop while sick)\n"
-        f"• 💀 Sick: {sick} (dmg: {c.get('tama_sick_health_damage', 0.5)}/turn)\n"
+        f"+{c.get('tama_dirt_health_damage', 5.0)} dmg/poop while sick)\n"
+        f"• 💀 Sick: {sick} (dmg: {c.get('tama_sick_health_damage', 5.0)}/turn)\n"
         f"• 🥚 Hatching: {hatching} (duration: {c.get('tama_egg_hatch_time', 30)}s)\n\n"
         f"**Feed / Drink Energy:**\n"
-        f"• Feed: +{c.get('tama_feed_energy_gain', 0.1)} energy every {c.get('tama_feed_energy_every', 1)} feeds "
+        f"• Feed: +{c.get('tama_feed_energy_gain', 1.0)} energy every {c.get('tama_feed_energy_every', 1)} feeds "
         f"(counter: {c.get('tama_feed_energy_counter', 0)})\n"
-        f"• Drink: +{c.get('tama_drink_energy_gain', 0.05)} energy every {c.get('tama_drink_energy_every', 1)} drinks "
+        f"• Drink: +{c.get('tama_drink_energy_gain', 1.0)} energy every {c.get('tama_drink_energy_every', 1)} drinks "
         f"(counter: {c.get('tama_drink_energy_counter', 0)})\n\n"
         f"**Play Effects:**\n"
-        f"• Happiness +{c.get('tama_play_happiness', 1.0)}\n"
+        f"• Happiness +{c.get('tama_play_happiness', 10.0)}\n"
         f"**Lucky Gift:**\n"
         f"• Cooldown: {c.get('tama_cd_lucky_gift', 600)}s | Reveal timer: {c.get('tama_lucky_gift_duration', 30)}s | Other-item cooldown: {c.get('tama_cd_other', 60)}s\n"
         f"**Medicine:**\n"
-        f"• Heal +{c.get('tama_medicate_health_heal', 2.0)} HP | Happiness -{c.get('tama_medicate_happiness_cost', 0.3)}\n\n"
+        f"• Heal +{c.get('tama_medicate_health_heal', 20.0)} HP | Happiness -{c.get('tama_medicate_happiness_cost', 3.0)}\n\n"
         f"**Rest:**\n"
         f"• Duration: {c.get('tama_rest_duration', 300)}s | Cooldown: {c.get('tama_cd_rest', 60)}s\n\n"
         f"**Button Cooldowns:**\n"
@@ -2361,15 +2361,15 @@ async def dev_set_stats(
     sick: bool | None = None,
 ):
     if hunger is not None:
-        bot_config["tama_hunger"] = max(0.0, min(float(bot_config.get("tama_hunger_max", 10)), round(hunger, 2)))
+        bot_config["tama_hunger"] = max(0.0, min(float(bot_config.get("tama_hunger_max", 100)), round(hunger, 2)))
     if thirst is not None:
-        bot_config["tama_thirst"] = max(0.0, min(float(bot_config.get("tama_thirst_max", 10)), round(thirst, 2)))
+        bot_config["tama_thirst"] = max(0.0, min(float(bot_config.get("tama_thirst_max", 100)), round(thirst, 2)))
     if happiness is not None:
-        bot_config["tama_happiness"] = max(0.0, min(float(bot_config.get("tama_happiness_max", 10)), round(happiness, 2)))
+        bot_config["tama_happiness"] = max(0.0, min(float(bot_config.get("tama_happiness_max", 100)), round(happiness, 2)))
     if health is not None:
-        bot_config["tama_health"] = max(0.0, min(float(bot_config.get("tama_health_max", 10)), round(health, 2)))
+        bot_config["tama_health"] = max(0.0, min(float(bot_config.get("tama_health_max", 100)), round(health, 2)))
     if energy is not None:
-        bot_config["tama_energy"] = max(0.0, min(float(bot_config.get("tama_energy_max", 10)), round(energy, 2)))
+        bot_config["tama_energy"] = max(0.0, min(float(bot_config.get("tama_energy_max", 100)), round(energy, 2)))
     if dirt is not None:
         bot_config["tama_dirt"] = max(0, min(int(bot_config.get("tama_dirt_max", 4)), dirt))
     if sick is not None:

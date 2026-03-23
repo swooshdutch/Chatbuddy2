@@ -4,6 +4,7 @@ Reads/writes a config.json file so settings survive Discloud restarts.
 """
 
 import json
+import math
 import os
 
 CONFIG_FILE = "config.json"
@@ -79,33 +80,34 @@ DEFAULTS = {
     "heartbeat_prompt": "",
     # â”€â”€ Tamagotchi (unified gamified system) â”€â”€
     "tama_enabled": False,
+    "tama_stat_scale_version": 2,
     # Hunger
-    "tama_hunger": 10.0,
-    "tama_hunger_max": 10,
-    "tama_hunger_depletion": 1.1,
+    "tama_hunger": 100.0,
+    "tama_hunger_max": 100,
+    "tama_hunger_depletion": 1.0,
     # Thirst
-    "tama_thirst": 10.0,
-    "tama_thirst_max": 10,
-    "tama_thirst_depletion": 1.8,
+    "tama_thirst": 100.0,
+    "tama_thirst_max": 100,
+    "tama_thirst_depletion": 1.0,
     # Happiness
-    "tama_happiness": 10.0,
-    "tama_happiness_max": 10,
-    "tama_happiness_depletion": 0.1,
+    "tama_happiness": 100.0,
+    "tama_happiness_max": 100,
+    "tama_happiness_depletion": 1.0,
     "tama_happiness_depletion_interval": 600,
     "tama_lonely_last_update_at": 0.0,
     # Health (counts down â€” death at 0)
-    "tama_health": 10.0,
-    "tama_health_max": 10,
-    "tama_health_damage_per_stat": 1.0,
-    "tama_health_threshold": 2.0,
+    "tama_health": 100.0,
+    "tama_health_max": 100,
+    "tama_health_damage_per_stat": 10.0,
+    "tama_health_threshold": 20.0,
     # Energy
-    "tama_energy": 10.0,
-    "tama_energy_max": 10,
-    "tama_energy_depletion_api": 0.1,
-    "tama_energy_depletion_game": 0.5,
+    "tama_energy": 100.0,
+    "tama_energy_max": 100,
+    "tama_energy_depletion_api": 1.0,
+    "tama_energy_depletion_game": 5.0,
     "tama_needs_depletion_per_energy": 1.0,
     "tama_energy_recharge_interval": 300,
-    "tama_energy_recharge_amount": 0.5,
+    "tama_energy_recharge_amount": 5.0,
     "tama_last_interaction_at": 0.0,
     "tama_rest_duration": 300,
     "tama_cd_rest": 60,
@@ -122,7 +124,7 @@ DEFAULTS = {
     ),
     "tama_action_log": [],
     "tama_inventory_initialized": False,
-    "tama_inventory_defaults_version": 4,
+    "tama_inventory_defaults_version": 5,
     "tama_inventory_items": {
         "unlimited_hamburger": {
             "name": "Hamburger",
@@ -154,7 +156,7 @@ DEFAULTS = {
             "item_type": "misc",
             "multiplier": 0.0,
             "energy_multiplier": 0.0,
-            "happiness_delta": 1.0,
+            "happiness_delta": 10.0,
             "button_style": "success",
             "amount": 0,
             "lucky_gift_prize": True,
@@ -164,7 +166,7 @@ DEFAULTS = {
             "name": "Sushi",
             "emoji": "🍣",
             "item_type": "food",
-            "multiplier": 1.3,
+            "multiplier": 2.0,
             "energy_multiplier": 2.0,
             "happiness_delta": 0.0,
             "button_style": "primary",
@@ -176,8 +178,8 @@ DEFAULTS = {
             "name": "Meat on Bone",
             "emoji": "🍖",
             "item_type": "food",
-            "multiplier": 1.6,
-            "energy_multiplier": 2.0,
+            "multiplier": 3.0,
+            "energy_multiplier": 3.0,
             "happiness_delta": 0.0,
             "button_style": "danger",
             "amount": 0,
@@ -190,7 +192,7 @@ DEFAULTS = {
             "item_type": "misc",
             "multiplier": 0.0,
             "energy_multiplier": 0.0,
-            "happiness_delta": -1.0,
+            "happiness_delta": -10.0,
             "button_style": "secondary",
             "amount": 0,
             "lucky_gift_prize": True,
@@ -202,27 +204,27 @@ DEFAULTS = {
     "tama_dirt_max": 4,
     "tama_dirt_food_threshold": 5,
     "tama_dirt_food_counter": 0,
-    "tama_dirt_health_damage": 0.5,
+    "tama_dirt_health_damage": 5.0,
     "tama_dirt_damage_interval": 600,
     "tama_dirt_grace_until": 0.0,
     "tama_dirt_poop_timer_max_minutes": 5,
     # Sickness (boolean flag)
     "tama_sick": False,
-    "tama_sick_health_damage": 0.5,
+    "tama_sick_health_damage": 5.0,
     # Button actions - fill / effect amounts
-    "tama_feed_amount": 1.0,
+    "tama_feed_amount": 10.0,
     "tama_feed_energy_every": 1,
-    "tama_feed_energy_gain": 0.1,
+    "tama_feed_energy_gain": 1.0,
     "tama_feed_energy_counter": 0,
-    "tama_drink_amount": 1.0,
+    "tama_drink_amount": 10.0,
     "tama_drink_energy_every": 1,
-    "tama_drink_energy_gain": 0.05,
+    "tama_drink_energy_gain": 1.0,
     "tama_drink_energy_counter": 0,
-    "tama_play_happiness": 1.0,
+    "tama_play_happiness": 10.0,
     "tama_lucky_gift_duration": 30,
     "tama_cd_lucky_gift": 600,
-    "tama_medicate_health_heal": 2.0,
-    "tama_medicate_happiness_cost": 0.3,
+    "tama_medicate_health_heal": 20.0,
+    "tama_medicate_happiness_cost": 3.0,
     # Button cooldowns (seconds, global)
     "tama_cd_feed": 60,
     "tama_cd_drink": 60,
@@ -251,9 +253,91 @@ DEFAULTS = {
 }
 
 
+def _scaled_whole_number(value, *, minimum: float | None = None) -> float:
+    scaled = math.ceil(max(0.0, float(value or 0.0)) * 10.0 - 1e-9)
+    if minimum is not None:
+        scaled = max(float(minimum), float(scaled))
+    return float(scaled)
+
+
+def _migrate_tamagotchi_scale(config: dict, stored: dict | None = None) -> bool:
+    stored = stored or {}
+    stored_version = int(stored.get("tama_stat_scale_version", 0) or 0)
+    if stored_version >= 2:
+        config["tama_stat_scale_version"] = 2
+        return False
+
+    should_scale_existing = any(
+        key in stored
+        for key in (
+            "tama_hunger_max",
+            "tama_thirst_max",
+            "tama_happiness_max",
+            "tama_health_max",
+            "tama_energy_max",
+        )
+    )
+    if not should_scale_existing:
+        config["tama_stat_scale_version"] = 2
+        return False
+
+    for key in (
+        "tama_hunger",
+        "tama_hunger_max",
+        "tama_thirst",
+        "tama_thirst_max",
+        "tama_happiness",
+        "tama_happiness_max",
+        "tama_health",
+        "tama_health_max",
+        "tama_energy",
+        "tama_energy_max",
+    ):
+        config[key] = round(float(config.get(key, 0.0) or 0.0) * 10.0, 2)
+
+    config["tama_hunger_depletion"] = 1.0
+    config["tama_thirst_depletion"] = 1.0
+    config["tama_happiness_depletion"] = _scaled_whole_number(config.get("tama_happiness_depletion", 0.1), minimum=1.0)
+    config["tama_health_damage_per_stat"] = _scaled_whole_number(config.get("tama_health_damage_per_stat", 1.0), minimum=1.0)
+    config["tama_health_threshold"] = _scaled_whole_number(config.get("tama_health_threshold", 2.0), minimum=1.0)
+    config["tama_energy_depletion_api"] = _scaled_whole_number(config.get("tama_energy_depletion_api", 0.1), minimum=1.0)
+    config["tama_energy_depletion_game"] = _scaled_whole_number(config.get("tama_energy_depletion_game", 0.5), minimum=1.0)
+    config["tama_energy_recharge_amount"] = _scaled_whole_number(config.get("tama_energy_recharge_amount", 0.5), minimum=1.0)
+    config["tama_dirt_health_damage"] = _scaled_whole_number(config.get("tama_dirt_health_damage", 0.5), minimum=1.0)
+    config["tama_sick_health_damage"] = _scaled_whole_number(config.get("tama_sick_health_damage", 0.5), minimum=1.0)
+    config["tama_feed_amount"] = _scaled_whole_number(config.get("tama_feed_amount", 1.0), minimum=1.0)
+    config["tama_feed_energy_gain"] = _scaled_whole_number(config.get("tama_feed_energy_gain", 0.1), minimum=1.0)
+    config["tama_drink_amount"] = _scaled_whole_number(config.get("tama_drink_amount", 1.0), minimum=1.0)
+    config["tama_drink_energy_gain"] = _scaled_whole_number(config.get("tama_drink_energy_gain", 0.05), minimum=1.0)
+    config["tama_play_happiness"] = _scaled_whole_number(config.get("tama_play_happiness", 1.0), minimum=1.0)
+    config["tama_medicate_health_heal"] = _scaled_whole_number(config.get("tama_medicate_health_heal", 2.0), minimum=1.0)
+    config["tama_medicate_happiness_cost"] = _scaled_whole_number(config.get("tama_medicate_happiness_cost", 0.3), minimum=1.0)
+
+    items = config.get("tama_inventory_items", {})
+    if isinstance(items, dict):
+        teddy = items.get("teddy_bear")
+        if isinstance(teddy, dict):
+            teddy["happiness_delta"] = 10.0
+        sushi = items.get("sushi")
+        if isinstance(sushi, dict):
+            sushi["multiplier"] = 2.0
+            sushi["energy_multiplier"] = 2.0
+        meat = items.get("meat_on_bone")
+        if isinstance(meat, dict):
+            meat["multiplier"] = 3.0
+            meat["energy_multiplier"] = 3.0
+        coal = items.get("lump_of_coal")
+        if isinstance(coal, dict):
+            coal["happiness_delta"] = -10.0
+
+    config["tama_stat_scale_version"] = 2
+    return True
+
+
 def load_config() -> dict:
     """Load config from disk, falling back to defaults for any missing keys."""
     config = dict(DEFAULTS)
+    stored: dict | None = None
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -261,6 +345,8 @@ def load_config() -> dict:
             config.update(stored)
         except (json.JSONDecodeError, OSError):
             pass  # Corrupted file â€” use defaults
+    if _migrate_tamagotchi_scale(config, stored):
+        save_config(config)
     return config
 
 

@@ -256,9 +256,9 @@ The Tamagotchi system is fully script-driven. The LLM is informed of current sta
 1. Enable it with `/set-tama-mode true` or `/set-tamagotchi-mode true`.
 2. `setup-bot` starts a fresh egg hatch in the main chat channel, and `/reset-tama-stats` does the same when Tamagotchi mode is enabled.
 3. While the egg is hatching, users cannot chat with the bot. The egg message shows a live countdown, and when it reaches zero the bot receives a hidden configurable hatch prompt and sends its first public message.
-4. A newly hatched bot starts with full health, but hunger, thirst, and happiness begin at 50% of their configured max values.
+4. A newly hatched bot starts with hunger and thirst at 50% of their configured max values, while happiness, health, and energy start full.
 5. Public bot messages use the compact quoted stat footer as the visible stat display. Happiness uses a dynamic emoji based on its current percent, and a skull icon appears whenever the bot is sick.
-6. Inventory and Play are always attached to public Tamagotchi messages. Medicate only appears while sick, Clean only appears while dirty, and Rest appears when energy is below `1`.
+6. Inventory and Play are always attached to public Tamagotchi messages. Medicate appears while the bot is sick or missing health, Clean only appears while dirty, and Rest appears when energy is below `1`.
 7. Pressing Play now opens a user-only game menu with one button per game.
 8. Rock-Paper-Scissors remains available from that menu. Intermediate choices stay private to the player; the final result is public.
 9. Lucky Gift is also available from the game menu. It has its own configurable cooldown and reveal timer, shows a live countdown, and then awards a random configured prize from the Lucky Gift pool.
