@@ -2230,23 +2230,31 @@ async def show_tama_stats(interaction: discord.Interaction):
 @app_commands.default_permissions(administrator=True)
 async def dev_set_stats(
     interaction: discord.Interaction,
-    hunger: float,
-    thirst: float,
-    happiness: float,
-    health: float,
-    energy: float,
-    satiation: float,
-    dirt: int,
-    sick: bool,
+    hunger: float | None = None,
+    thirst: float | None = None,
+    happiness: float | None = None,
+    health: float | None = None,
+    energy: float | None = None,
+    satiation: float | None = None,
+    dirt: int | None = None,
+    sick: bool | None = None,
 ):
-    bot_config["tama_hunger"] = max(0.0, min(float(bot_config.get("tama_hunger_max", 10)), round(hunger, 2)))
-    bot_config["tama_thirst"] = max(0.0, min(float(bot_config.get("tama_thirst_max", 10)), round(thirst, 2)))
-    bot_config["tama_happiness"] = max(0.0, min(float(bot_config.get("tama_happiness_max", 10)), round(happiness, 2)))
-    bot_config["tama_health"] = max(0.0, min(float(bot_config.get("tama_health_max", 10)), round(health, 2)))
-    bot_config["tama_energy"] = max(0.0, min(float(bot_config.get("tama_energy_max", 10)), round(energy, 2)))
-    bot_config["tama_satiation"] = max(0.0, min(float(bot_config.get("tama_satiation_max", 10)), round(satiation, 2)))
-    bot_config["tama_dirt"] = max(0, min(int(bot_config.get("tama_dirt_max", 4)), dirt))
-    bot_config["tama_sick"] = sick
+    if hunger is not None:
+        bot_config["tama_hunger"] = max(0.0, min(float(bot_config.get("tama_hunger_max", 10)), round(hunger, 2)))
+    if thirst is not None:
+        bot_config["tama_thirst"] = max(0.0, min(float(bot_config.get("tama_thirst_max", 10)), round(thirst, 2)))
+    if happiness is not None:
+        bot_config["tama_happiness"] = max(0.0, min(float(bot_config.get("tama_happiness_max", 10)), round(happiness, 2)))
+    if health is not None:
+        bot_config["tama_health"] = max(0.0, min(float(bot_config.get("tama_health_max", 10)), round(health, 2)))
+    if energy is not None:
+        bot_config["tama_energy"] = max(0.0, min(float(bot_config.get("tama_energy_max", 10)), round(energy, 2)))
+    if satiation is not None:
+        bot_config["tama_satiation"] = max(0.0, min(float(bot_config.get("tama_satiation_max", 10)), round(satiation, 2)))
+    if dirt is not None:
+        bot_config["tama_dirt"] = max(0, min(int(bot_config.get("tama_dirt_max", 4)), dirt))
+    if sick is not None:
+        bot_config["tama_sick"] = sick
     save_config(bot_config)
     await interaction.response.send_message(
         "✅ Current Tamagotchi stats updated for testing.", ephemeral=True

@@ -705,8 +705,13 @@ def deplete_stats(config: dict) -> str | None:
         ),
     )
 
+    threshold = float(config.get("tama_health_threshold", 2.0))
+    low_hunger = float(config.get("tama_hunger", 0) or 0) < threshold
+    low_thirst = float(config.get("tama_thirst", 0) or 0) < threshold
+    if low_hunger or low_thirst:
+        config["tama_sick"] = True
+
     # â”€â”€ Health damage from stats below threshold â”€â”€
-    threshold = config.get("tama_health_threshold", 2.0)
     dmg_per = config.get("tama_health_damage_per_stat", 1.0) * multiplier
     health_loss = 0.0
     for stat_key in ("tama_hunger", "tama_thirst", "tama_happiness"):
@@ -1202,6 +1207,31 @@ class MedicateButton(ui.Button):
         max_health = float(self.config.get("tama_health_max", 10))
         current_health = float(self.config.get("tama_health", 0))
         is_sick = self.config.get("tama_sick", False)
+        dirt = int(self.config.get("tama_dirt", 0) or 0)
+        threshold = float(self.config.get("tama_health_threshold", 2.0))
+        low_hunger = float(self.config.get("tama_hunger", 0) or 0) < threshold
+        low_thirst = float(self.config.get("tama_thirst", 0) or 0) < threshold
+
+        if dirt > 0:
+            await interaction.response.send_message(
+                "🚿 Clean the bot before medicating it.",
+                ephemeral=True,
+            )
+            return
+
+        if is_sick and (low_hunger or low_thirst):
+            needs = []
+            if low_hunger:
+                needs.append("hunger")
+            if low_thirst:
+                needs.append("thirst")
+            needs_text = " and ".join(needs)
+            await interaction.response.send_message(
+                f"🍔🥤 {needs_text.capitalize()} must be above {threshold:g} before you can medicate the bot.",
+                ephemeral=True,
+            )
+            return
+
         if not is_sick and current_health >= max_health:
             msg = self.config.get("tama_resp_medicate_healthy", "I'm not sick!")
             await interaction.response.send_message(msg, ephemeral=True)
