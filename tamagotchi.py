@@ -352,6 +352,38 @@ def can_use_energy(config: dict) -> bool:
     return float(config.get("tama_energy", 0.0) or 0.0) > 0.0
 
 
+def energy_ratio(config: dict) -> float:
+    maximum = float(config.get("tama_energy_max", 100) or 0.0)
+    if maximum <= 0.0:
+        return 0.0
+    current = float(config.get("tama_energy", 0.0) or 0.0)
+    return max(0.0, min(1.0, current / maximum))
+
+
+def should_auto_sleep(config: dict) -> bool:
+    return (
+        config.get("tama_enabled", False)
+        and not is_sleeping(config)
+        and float(config.get("tama_energy", 0.0) or 0.0) <= 0.0
+    )
+
+
+def apply_low_energy_happiness_penalty(config: dict) -> float:
+    threshold_pct = max(0.0, min(100.0, float(config.get("tama_low_energy_happiness_threshold_pct", 10.0) or 0.0)))
+    happiness_loss = max(0.0, float(config.get("tama_low_energy_happiness_loss", 1.0) or 0.0))
+    if threshold_pct <= 0.0 or happiness_loss <= 0.0:
+        return 0.0
+    if energy_ratio(config) * 100.0 >= threshold_pct:
+        return 0.0
+
+    current_happiness = float(config.get("tama_happiness", 0.0) or 0.0)
+    new_happiness = max(0.0, round(current_happiness - happiness_loss, 2))
+    actual_loss = round(current_happiness - new_happiness, 2)
+    if actual_loss > 0.0:
+        config["tama_happiness"] = new_happiness
+    return actual_loss
+
+
 def _stat_ratio(current: float, maximum: float) -> float:
     if maximum <= 0:
         return 0.0
@@ -627,9 +659,11 @@ class TamagotchiManager:
 
     def begin_rest(self, channel_id: int | str | None = None):
         duration = max(1, int(self.config.get("tama_rest_duration", 300)))
-        self._sleep_expiry = time.time() + duration
+        started_at = time.time()
+        self._sleep_expiry = started_at + duration
         self.config["tama_sleeping"] = True
         self.config["tama_sleep_until"] = self._sleep_expiry
+        self.config["tama_sleep_started_at"] = started_at
         self.config["tama_sleep_channel_id"] = str(channel_id or "")
         self.config["tama_sleep_message_id"] = ""
         save_config(self.config)
@@ -641,10 +675,29 @@ class TamagotchiManager:
         self._sleep_expiry = 0.0
         self.config["tama_sleeping"] = False
         self.config["tama_sleep_until"] = 0.0
+        self.config["tama_sleep_started_at"] = 0.0
         self.config["tama_energy"] = float(self.config.get("tama_energy_max", 100))
         self.config["tama_sleep_channel_id"] = ""
         self.config["tama_sleep_message_id"] = ""
         save_config(self.config)
+
+    async def send_sleep_announcement(self, channel_id: int | str | None = None):
+        channel_id = self._resolve_main_channel_id(channel_id or self.config.get("tama_sleep_channel_id"))
+        channel = await self._resolve_channel(channel_id)
+        if channel is None:
+            return
+
+        msg = self.config.get("tama_resp_rest", "💤 Tucking in for a recharge. See you soon!")
+        msg += f"\n⏳ {_discord_relative_time(self.sleep_remaining)}"
+        try:
+            response_message = await channel.send(
+                append_tamagotchi_footer(msg, self.config, self),
+                view=TamagotchiView(self.config, self),
+            )
+            self.config["tama_sleep_message_id"] = str(response_message.id)
+            save_config(self.config)
+        except Exception as e:
+            print(f"[Tamagotchi] Failed to post sleep announcement in channel {channel_id}: {e}")
 
     async def _sleep_countdown(self, duration: float):
         try:
@@ -652,29 +705,81 @@ class TamagotchiManager:
         except asyncio.CancelledError:
             return
         channel_id = self.config.get("tama_sleep_channel_id")
-        message_id = self.config.get("tama_sleep_message_id")
+        sleep_started_at = float(self.config.get("tama_sleep_started_at", 0.0) or 0.0)
         self.finish_rest()
-        await self._announce_rest_complete(channel_id, message_id)
+        await self._announce_rest_complete(channel_id, sleep_started_at)
 
-    async def _announce_rest_complete(self, channel_id: int | str | None, message_id: int | str | None):
+    async def _announce_rest_complete(self, channel_id: int | str | None, sleep_started_at: float):
         channel = await self._resolve_channel(channel_id)
         if channel is None:
             return
+        await self._run_wake_prompt(channel, sleep_started_at)
 
-        message_id = str(message_id or "").strip()
-        awake_text = append_tamagotchi_footer(build_awake_message(self.config), self.config, self)
-        awake_view = TamagotchiView(self.config, self)
-        if message_id:
-            try:
-                message = await channel.fetch_message(int(message_id))
-                await message.edit(content=awake_text, view=awake_view)
-                return
-            except Exception:
-                pass
-        try:
-            await channel.send(awake_text, view=awake_view)
-        except Exception:
-            return
+    async def _run_wake_prompt(self, channel, sleep_started_at: float):
+        from gemini_api import generate
+        from utils import chunk_message, format_context, resolve_custom_emoji, extract_thoughts
+
+        history_limit = max(1, int(self.config.get("chat_history_limit", 30) or 30))
+        fetch_limit = max(history_limit * 4, 120)
+        history_messages: list[discord.Message] = []
+        async for msg in channel.history(limit=fetch_limit):
+            if sleep_started_at > 0.0 and msg.created_at.timestamp() < sleep_started_at:
+                continue
+            history_messages.append(msg)
+        history_messages.reverse()
+        if len(history_messages) > history_limit:
+            history_messages = history_messages[-history_limit:]
+
+        ce_channels = self.config.get("ce_channels", {})
+        ce_enabled = ce_channels.get(str(channel.id), True)
+        context = format_context(history_messages, ce_enabled=ce_enabled)
+
+        prompt = self.config.get(
+            "tama_wake_prompt",
+            "This is an automated system message: you have just woken up from taking a nap. "
+            "Let the chat know you are awake again. Review any messages sent after you fell asleep "
+            "and decide whether you want to respond to anyone.",
+        )
+        response_text, audio_bytes, soul_logs, _ = await generate(
+            prompt=prompt,
+            context=context,
+            config=self.config,
+            speaker_name="System",
+            speaker_id="system",
+        )
+        clean_text, thoughts_text = extract_thoughts(response_text)
+        response_text = clean_text
+
+        soc_channel_id = str(self.config.get("soc_channel_id", "") or "").strip()
+        if thoughts_text and self.config.get("soc_enabled", False) and soc_channel_id:
+            thought_channel = await self._resolve_channel(soc_channel_id)
+            if thought_channel is not None:
+                for chunk in chunk_message(thoughts_text):
+                    await thought_channel.send(chunk)
+
+        response_text = resolve_custom_emoji(response_text, getattr(channel, "guild", None))
+        if self.config.get("tama_enabled", False):
+            response_text = append_tamagotchi_footer(response_text, self.config, self)
+            wake_view = TamagotchiView(self.config, self)
+        else:
+            wake_view = None
+        chunks = chunk_message(response_text) if response_text else []
+
+        if audio_bytes:
+            audio_file = discord.File(fp=io.BytesIO(audio_bytes), filename="wake.wav")
+            await channel.send(file=audio_file)
+
+        for i, chunk in enumerate(chunks):
+            view = wake_view if i == len(chunks) - 1 else None
+            await channel.send(chunk, view=view)
+
+        if soul_logs and self.config.get("soul_channel_enabled"):
+            soul_channel_id = str(self.config.get("soul_channel_id", "") or "").strip()
+            soul_channel = await self._resolve_channel(soul_channel_id)
+            if soul_channel is not None:
+                joined_logs = "\n".join(soul_logs)
+                for log_chunk in chunk_message(joined_logs, limit=1900):
+                    await soul_channel.send(f"**🧠 Soul Updates:**\n{log_chunk}")
 
     def _resume_hatching_state(self):
         expiry = float(self.config.get("tama_hatch_until", 0.0) or 0.0)
@@ -1023,6 +1128,7 @@ def deplete_stats(config: dict) -> str | None:
         ),
     )
     apply_need_depletion_from_energy(config, energy_loss)
+    apply_low_energy_happiness_penalty(config)
 
     threshold = float(config.get("tama_health_threshold", 20.0))
     low_hunger = float(config.get("tama_hunger", 0) or 0) < threshold
@@ -1247,7 +1353,6 @@ class TamagotchiView(ui.View):
         self._build()
 
     def _build(self):
-        energy    = self.config.get("tama_energy", 0)
         # â”€â”€ Row 0: Action buttons only â”€â”€
         self.add_item(InventoryButton(self.config, self.manager))
         self.add_item(PlayButton(self.config, self.manager))
@@ -1255,8 +1360,6 @@ class TamagotchiView(ui.View):
             self.add_item(MedicateButton(self.config, self.manager))
         if int(self.config.get("tama_dirt", 0) or 0) > 0:
             self.add_item(CleanButton(self.config, self.manager))
-        if energy < 10:
-            self.add_item(RestButton(self.config, self.manager))
 
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -1676,47 +1779,6 @@ class CleanButton(ui.Button):
 _RPS_EMOJI = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
 
 
-class RestButton(ui.Button):
-    def __init__(self, config, manager):
-        super().__init__(
-            label="💤 Rest",
-            style=discord.ButtonStyle.secondary,
-            custom_id="tama_rest",
-            row=1,
-        )
-        self.config = config
-        self.manager = manager
-
-    async def callback(self, interaction: discord.Interaction):
-        self.manager.record_interaction()
-        remaining = self.manager.check_cooldown("rest")
-        if remaining > 0:
-            msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
-                "{time}", _discord_relative_time(remaining)
-            )
-            await interaction.response.send_message(msg, ephemeral=True)
-            return
-
-        if self.manager.sleeping:
-            await _send_sleep_block(interaction, self.config)
-            return
-
-        self.manager.begin_rest(interaction.channel_id)
-        self.manager.set_cooldown("rest", self.config.get("tama_cd_rest", 60))
-        msg = self.config.get("tama_resp_rest", "💤 Tucking in for a recharge. See you soon!")
-        msg += f"\n⏳ {_discord_relative_time(self.manager.sleep_remaining)}"
-        await interaction.response.send_message(
-            append_tamagotchi_footer(msg, self.config, self.manager),
-            view=TamagotchiView(self.config, self.manager),
-        )
-        try:
-            response_message = await interaction.original_response()
-            self.config["tama_sleep_message_id"] = str(response_message.id)
-            save_config(self.config)
-        except Exception:
-            pass
-
-
 class GameSelectView(ui.View):
     def __init__(self, config: dict, manager: TamagotchiManager, owner_id: int):
         super().__init__(timeout=300)
@@ -1754,6 +1816,10 @@ class GameSelectView(ui.View):
         )
 
         deplete_energy_game(self.config)
+        started_sleep = False
+        if should_auto_sleep(self.config):
+            self.manager.begin_rest(interaction.channel_id)
+            started_sleep = True
         self.manager.set_cooldown("play", self.config.get("tama_cd_play", 60))
 
         bot_choice = random.choice(["rock", "paper", "scissors"])
@@ -1763,6 +1829,8 @@ class GameSelectView(ui.View):
             content=f"{msg}\n**Rock, Paper, Scissors — pick your move!**",
             view=rps_view,
         )
+        if started_sleep:
+            await self.manager.send_sleep_announcement(interaction.channel_id)
 
     @ui.button(label="Lucky Gift", emoji="🎁", style=discord.ButtonStyle.success, row=0)
     async def lucky_gift_btn(self, interaction: discord.Interaction, button: ui.Button):
@@ -1787,6 +1855,10 @@ class GameSelectView(ui.View):
             return
 
         deplete_energy_game(self.config)
+        started_sleep = False
+        if should_auto_sleep(self.config):
+            self.manager.begin_rest(interaction.channel_id)
+            started_sleep = True
         self.manager.set_cooldown("lucky_gift", self.config.get("tama_cd_lucky_gift", 600))
 
         duration = max(1, int(self.config.get("tama_lucky_gift_duration", 30)))
@@ -1825,6 +1897,8 @@ class GameSelectView(ui.View):
                 append_tamagotchi_footer(public_text, self.config, self.manager),
                 view=TamagotchiView(self.config, self.manager),
             )
+            if started_sleep:
+                await self.manager.send_sleep_announcement(interaction.channel_id)
 
 
 class RPSView(ui.View):

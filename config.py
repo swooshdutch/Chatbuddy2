@@ -27,7 +27,7 @@ DEFAULTS = {
     "api_key_custom": "",
     "model_endpoint_custom": "",
     "temperature": 0.7,
-    "chat_history_limit": 30,
+    "chat_history_limit": 40,
     # Text model mode: "gemini" | "gemma" | "custom"
     "model_mode": "gemini",
     # Audio clip mode
@@ -108,11 +108,14 @@ DEFAULTS = {
     "tama_needs_depletion_per_energy": 1.0,
     "tama_energy_recharge_interval": 300,
     "tama_energy_recharge_amount": 5.0,
+    "tama_low_energy_happiness_threshold_pct": 10.0,
+    "tama_low_energy_happiness_loss": 1.0,
     "tama_last_interaction_at": 0.0,
     "tama_rest_duration": 300,
     "tama_cd_rest": 60,
     "tama_sleeping": False,
     "tama_sleep_until": 0.0,
+    "tama_sleep_started_at": 0.0,
     "tama_sleep_channel_id": "",
     "tama_sleep_message_id": "",
     "tama_hatching": False,
@@ -123,6 +126,11 @@ DEFAULTS = {
     "tama_hatch_prompt": (
         "You have just hatched in this Discord server. Your life has begun right now. "
         "Send your very first message to the server."
+    ),
+    "tama_wake_prompt": (
+        "This is an automated system message: you have just woken up from taking a nap. "
+        "Let the chat know you are awake again. Review any messages sent after you fell asleep "
+        "and decide whether you want to respond to anyone."
     ),
     "tama_action_log": [],
     "tama_inventory_initialized": False,

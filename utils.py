@@ -8,7 +8,7 @@ import os
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Dict, Tuple, Union, Optional
+from typing import List, Union, Optional
 
 import discord
 
@@ -81,97 +81,6 @@ def _to_context_entry(entry: Union[discord.Message, ContextEntry]) -> ContextEnt
     )
 
 
-def _build_tamagotchi_action_summary(action_events: list[dict]) -> Optional[ContextEntry]:
-    if not action_events:
-        return None
-
-    grouped: dict[tuple[str, str, str], int] = {}
-    for event in action_events:
-        action = str(event.get("action", "")).strip()
-        if action not in {"feed", "drink"}:
-            continue
-        user_name = str(event.get("user_name", "Unknown user")).strip() or "Unknown user"
-        item_name = str(event.get("item_name", "")).strip() or ("food" if action == "feed" else "drink")
-        grouped[(action, user_name, item_name)] = grouped.get((action, user_name, item_name), 0) + 1
-
-    if not grouped:
-        return None
-
-    parts: list[str] = []
-    for (_, user_name, item_name), count in grouped.items():
-        noun = item_name.lower()
-        parts.append(f"received {count}x {noun} from {user_name}")
-
-    last_ts = max(float(event.get("timestamp", 0.0) or 0.0) for event in action_events)
-    summary_text = "Tamagotchi activity since last turn: " + "; ".join(parts) + "."
-    return ContextEntry(
-        timestamp=datetime.utcfromtimestamp(last_ts),
-        display_name="Tamagotchi Summary",
-        user_id=0,
-        content=summary_text,
-    )
-
-
-def _collapse_tamagotchi_actions(
-    messages: List[discord.Message],
-    config: Optional[dict] = None,
-) -> List[Union[discord.Message, ContextEntry]]:
-    if not config or not config.get("tama_enabled", False):
-        return list(messages)
-
-    action_log = config.get("tama_action_log", [])
-    if not action_log:
-        return list(messages)
-
-    action_by_message_id: dict[int, dict] = {}
-    for event in action_log:
-        try:
-            message_id = int(event.get("message_id", 0) or 0)
-        except (TypeError, ValueError):
-            continue
-        if message_id:
-            action_by_message_id[message_id] = event
-
-    if not action_by_message_id:
-        return list(messages)
-
-    latest_bot_turn_index = None
-    for i in range(len(messages) - 1, -1, -1):
-        msg = messages[i]
-        if msg.id in action_by_message_id:
-            continue
-        if getattr(msg.author, "bot", False):
-            latest_bot_turn_index = i
-            break
-
-    if latest_bot_turn_index is None:
-        return list(messages)
-
-    action_events: list[dict] = []
-    action_message_ids: set[int] = set()
-    for msg in messages[latest_bot_turn_index + 1:]:
-        event = action_by_message_id.get(msg.id)
-        if event and event.get("action") in {"feed", "drink"}:
-            action_events.append(event)
-            action_message_ids.add(msg.id)
-
-    if not action_events:
-        return list(messages)
-
-    summary_entry = _build_tamagotchi_action_summary(action_events)
-    collapsed: List[Union[discord.Message, ContextEntry]] = []
-
-    for i, msg in enumerate(messages):
-        if msg.id in action_message_ids:
-            continue
-
-        collapsed.append(msg)
-        if i == latest_bot_turn_index and summary_entry:
-            collapsed.append(summary_entry)
-
-    return collapsed
-
-
 async def collect_context_entries(
     channel: discord.abc.Messageable,
     limit: int,
@@ -179,16 +88,14 @@ async def collect_context_entries(
     config: Optional[dict] = None,
     before: Optional[discord.Message] = None,
 ) -> List[Union[discord.Message, ContextEntry]]:
-    fetch_limit = max(limit * 4, 120)
+    fetch_limit = max(limit, 1)
     messages: List[discord.Message] = []
     async for msg in channel.history(limit=fetch_limit, before=before):
         messages.append(msg)
     messages.reverse()
-
-    collapsed = _collapse_tamagotchi_actions(messages, config=config)
-    if len(collapsed) > limit:
-        collapsed = collapsed[-limit:]
-    return collapsed
+    if len(messages) > limit:
+        messages = messages[-limit:]
+    return messages
 
 
 def format_context(messages: List[Union[discord.Message, ContextEntry]], ce_enabled: bool = True) -> str:

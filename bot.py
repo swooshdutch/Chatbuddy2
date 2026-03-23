@@ -29,6 +29,7 @@ from tamagotchi import (
     append_tamagotchi_footer, build_sleeping_message, is_sleeping,
     build_hatching_message, is_hatching, reset_tamagotchi_state,
     wipe_soul_file, ensure_inventory_defaults, get_inventory_items,
+    should_auto_sleep,
     inventory_item_id_from_name, BUTTON_STYLE_LABELS,
 )
 
@@ -135,6 +136,15 @@ def _build_tama_view():
     if bot_config.get("tama_enabled", False) and tama_manager:
         return TamagotchiView(bot_config, tama_manager)
     return None
+
+
+def _maybe_begin_auto_rest(channel_id: int | str | None) -> bool:
+    if not (bot_config.get("tama_enabled", False) and tama_manager):
+        return False
+    if not should_auto_sleep(bot_config):
+        return False
+    tama_manager.begin_rest(channel_id)
+    return True
 
 
 def _format_tama_item_summary(item: dict) -> str:
@@ -378,7 +388,7 @@ async def _generate_and_respond(message: discord.Message):
                 search_ctx = await asyncio.to_thread(get_duckduckgo_context, query)
                 user_text = f"{search_ctx}\n\nUser Question/Message: {user_text}"
 
-        history_limit = bot_config.get("chat_history_limit", 30)
+        history_limit = bot_config.get("chat_history_limit", 40)
         history_messages = await collect_context_entries(
             message.channel,
             history_limit,
@@ -411,6 +421,7 @@ async def _generate_and_respond(message: discord.Message):
         # Tamagotchi: deplete stats after generate
         death_msg = deplete_stats(bot_config)
         is_dead = False
+        started_sleep = _maybe_begin_auto_rest(message.channel.id)
         if death_msg:
             response_text = (response_text + "\n\n" + death_msg) if response_text else death_msg
             is_dead = True
@@ -439,6 +450,7 @@ async def _generate_and_respond(message: discord.Message):
                 )
                 # Tamagotchi: deplete stats for the second inference too
                 death_msg2 = deplete_stats(bot_config)
+                started_sleep = _maybe_begin_auto_rest(message.channel.id) or started_sleep
                 if death_msg2:
                     response_text = (response_text + "\n\n" + death_msg2) if response_text else death_msg2
                     is_dead = True
@@ -477,6 +489,8 @@ async def _generate_and_respond(message: discord.Message):
                     await message.reply(chunk, mention_author=False, view=v)
                 else:
                     await message.channel.send(chunk, view=v)
+        if started_sleep and tama_manager:
+            await tama_manager.send_sleep_announcement(message.channel.id)
 
         # Send soul logs to configured channel if present
         if soul_logs and bot_config.get("soul_channel_enabled"):
@@ -532,7 +546,7 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
                 search_ctx = await asyncio.to_thread(get_duckduckgo_context, query)
                 batched_input = f"{search_ctx}\n\nUser Question/Message: {batched_input}"
 
-        history_limit = bot_config.get("chat_history_limit", 30)
+        history_limit = bot_config.get("chat_history_limit", 40)
         history_messages = await collect_context_entries(
             channel,
             history_limit,
@@ -566,6 +580,7 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
         # Tamagotchi: deplete stats after generate
         death_msg = deplete_stats(bot_config)
         is_dead = False
+        started_sleep = _maybe_begin_auto_rest(channel.id)
         if death_msg:
             response_text = (response_text + "\n\n" + death_msg) if response_text else death_msg
             is_dead = True
@@ -594,6 +609,7 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
                 )
                 # Tamagotchi: deplete stats for the second inference too
                 death_msg2 = deplete_stats(bot_config)
+                started_sleep = _maybe_begin_auto_rest(channel.id) or started_sleep
                 if death_msg2:
                     response_text = (response_text + "\n\n" + death_msg2) if response_text else death_msg2
                     is_dead = True
@@ -623,6 +639,8 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
             for i, chunk in enumerate(chunks):
                 v = tama_view if (i == len(chunks) - 1 and tama_view) else None
                 await channel.send(chunk, view=v)
+        if started_sleep and tama_manager:
+            await tama_manager.send_sleep_announcement(channel.id)
 
         if soul_logs and bot_config.get("soul_channel_enabled"):
             ch_id = bot_config.get("soul_channel_id")
@@ -761,7 +779,7 @@ async def set_duck_search(interaction: discord.Interaction, enabled: bool):
 
 
 @bot.tree.command(name="set-chat-history", description="Set how many messages of context the bot receives")
-@app_commands.describe(limit="Number of previous messages (default: 30)")
+@app_commands.describe(limit="Number of previous messages (default: 40)")
 @app_commands.default_permissions(administrator=True)
 async def set_chat_history(interaction: discord.Interaction, limit: int):
     if limit < 1:
@@ -1767,10 +1785,36 @@ async def set_tama_energy(
     )
 
 
-@bot.tree.command(name="set-tama-rest", description="Configure the rest button and sleep duration")
+@bot.tree.command(name="set-tama-low-energy-mood", description="Configure happiness loss when energy gets critically low")
+@app_commands.describe(
+    threshold_percent="Below this energy percent, LLM turns reduce happiness",
+    happiness_loss="Happiness lost per LLM turn while below the threshold",
+)
+@app_commands.default_permissions(administrator=True)
+async def set_tama_low_energy_mood(
+    interaction: discord.Interaction,
+    threshold_percent: float,
+    happiness_loss: float,
+):
+    if threshold_percent < 0 or threshold_percent > 100:
+        await interaction.response.send_message("⚠️ Threshold percent must be between 0 and 100.", ephemeral=True)
+        return
+    if happiness_loss < 0:
+        await interaction.response.send_message("⚠️ Happiness loss must be ≥ 0.", ephemeral=True)
+        return
+    bot_config["tama_low_energy_happiness_threshold_pct"] = round(threshold_percent, 2)
+    bot_config["tama_low_energy_happiness_loss"] = round(happiness_loss, 2)
+    save_config(bot_config)
+    await interaction.response.send_message(
+        f"✅ Low-energy mood: lose **{happiness_loss:g}** happiness per LLM turn below **{threshold_percent:g}%** energy.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="set-tama-rest", description="Configure automatic sleep duration")
 @app_commands.describe(
     duration="How long the bot sleeps in seconds",
-    cooldown="Global cooldown for the rest button in seconds",
+    cooldown="Legacy rest cooldown value kept for compatibility",
 )
 @app_commands.default_permissions(administrator=True)
 async def set_tama_rest(interaction: discord.Interaction, duration: int, cooldown: int):
@@ -1809,6 +1853,15 @@ async def set_tama_hatch_prompt(interaction: discord.Interaction, prompt: str):
     bot_config["tama_hatch_prompt"] = prompt.strip()
     save_config(bot_config)
     await interaction.response.send_message("✅ Egg hatch prompt updated.", ephemeral=True)
+
+
+@bot.tree.command(name="set-tama-wake-prompt", description="Configure the hidden prompt used when the bot wakes from sleep")
+@app_commands.describe(prompt="The automated input the bot receives when it wakes up")
+@app_commands.default_permissions(administrator=True)
+async def set_tama_wake_prompt(interaction: discord.Interaction, prompt: str):
+    bot_config["tama_wake_prompt"] = prompt.strip()
+    save_config(bot_config)
+    await interaction.response.send_message("✅ Wake prompt updated.", ephemeral=True)
 
 
 @bot.tree.command(name="set-tama-dirt", description="Configure the dirtiness/poop system")
@@ -2293,7 +2346,8 @@ async def show_tama_stats(interaction: discord.Interaction):
         f"• 🥤 Thirst: {_fs(c.get('tama_thirst', 0))}/{c.get('tama_thirst_max', 100)}"
         f"  (-{c.get('tama_thirst_depletion', 1.0)} per {c.get('tama_needs_depletion_per_energy', 1.0):g} energy)\n"
         f"• 😊 Happiness: {_fs(c.get('tama_happiness', 0))}/{c.get('tama_happiness_max', 100)}"
-        f"  (-{c.get('tama_happiness_depletion', 1.0)} every {c.get('tama_happiness_depletion_interval', 600)}s without interaction)\n"
+        f"  (-{c.get('tama_happiness_depletion', 1.0)} every {c.get('tama_happiness_depletion_interval', 600)}s without interaction, "
+        f"-{c.get('tama_low_energy_happiness_loss', 1.0)} below {c.get('tama_low_energy_happiness_threshold_pct', 10.0):g}% energy per LLM turn)\n"
         f"• ❤️ Health: {_fs(c.get('tama_health', 0))}/{c.get('tama_health_max', 100)}"
         f"  (threshold: {c.get('tama_health_threshold', 20.0)}, dmg/stat: {c.get('tama_health_damage_per_stat', 10.0)})\n"
         f"• ⚡ Energy: {_fs(c.get('tama_energy', 0))}/{c.get('tama_energy_max', 100)}"
@@ -2318,11 +2372,12 @@ async def show_tama_stats(interaction: discord.Interaction):
         f"**Medicine:**\n"
         f"• Heal +{c.get('tama_medicate_health_heal', 20.0)} HP | Happiness -{c.get('tama_medicate_happiness_cost', 3.0)}\n\n"
         f"**Rest:**\n"
-        f"• Duration: {c.get('tama_rest_duration', 300)}s | Cooldown: {c.get('tama_cd_rest', 60)}s\n\n"
+        f"• Auto-sleep duration: {c.get('tama_rest_duration', 300)}s | Legacy cooldown: {c.get('tama_cd_rest', 60)}s\n"
+        f"• Wake prompt: {c.get('tama_wake_prompt', '') or '(default)'}\n\n"
         f"**Button Cooldowns:**\n"
         f"• Feed: {c.get('tama_cd_feed', 60)}s | Drink: {c.get('tama_cd_drink', 60)}s | "
         f"Play: {c.get('tama_cd_play', 60)}s | Medicate: {c.get('tama_cd_medicate', 60)}s | "
-        f"Clean: {c.get('tama_cd_clean', 60)}s | Rest: {c.get('tama_cd_rest', 60)}s | Other: {c.get('tama_cd_other', 60)}s | "
+        f"Clean: {c.get('tama_cd_clean', 60)}s | Other: {c.get('tama_cd_other', 60)}s | "
         f"Lucky Gift: {c.get('tama_cd_lucky_gift', 600)}s\n\n"
         f"**Inventory Items:**\n"
         f"{inventory_lines}"
@@ -2662,7 +2717,8 @@ async def help_command(interaction: discord.Interaction):
         value=(
             "**Stats:** `/set-tama-hunger` `/set-tama-thirst` `/set-tama-happiness` "
             "`/set-tama-health` `/set-tama-energy` `/set-tama-dirt` "
-            "`/set-tama-sickness` `/set-tama-rest` `/set-tama-hatch-time` `/set-tama-hatch-prompt`\n"
+            "`/set-tama-sickness` `/set-tama-rest` `/set-tama-low-energy-mood` `/set-tama-hatch-time` "
+            "`/set-tama-hatch-prompt` `/set-tama-wake-prompt`\n"
             "**Buttons:** `/set-tama-feed` `/set-tama-drink` `/set-tama-play` "
             "`/set-tama-lucky-gift` `/set-tama-medicate` `/set-tama-clean`\n"
             "**Inventory:** `/add-tama-item` `/show-tama-items` `/remove-tama-item`\n"
@@ -2685,8 +2741,9 @@ async def help_command(interaction: discord.Interaction):
             "`/reset-tama-stats` - Reset the pet / start a new egg\n\n"
             "Setup, reset, and death can start a new egg hatch. While hatching, chat is blocked. "
             "Hunger and thirst now drain from energy use instead of per turn, happiness drains only from loneliness, "
-            "medicine and clean only appear when relevant, Lucky Gift can award inventory items and happiness changes, "
-            "inventory food can queue randomized poop timers, and rest appears below 1 energy."
+            "critically low energy can also drain happiness on LLM turns, medicine and clean only appear when relevant, "
+            "Lucky Gift can award inventory items and happiness changes, inventory food can queue randomized poop timers, "
+            "and hitting 0 energy now puts the bot to sleep automatically."
         ),
         inline=False,
     )
