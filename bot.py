@@ -1513,11 +1513,34 @@ async def setup_bot(interaction: discord.Interaction):
     bot_config["bot_owner_id"] = _configured_owner_id()
     bot_config["reminders_channel_id"] = str(SETUP_MAIN_CHAT_CHANNEL)
 
+    with open("soul.md", "w", encoding="utf-8") as f:
+        f.write("{}")
+
     save_config(bot_config)
     _restart_background_managers()
 
+    ce_channel_ids: set[int] = set()
+    if SETUP_MAIN_CHAT_CHANNEL:
+        ce_channel_ids.add(int(SETUP_MAIN_CHAT_CHANNEL))
+    if SETUP_THOUGHTS_CHANNEL:
+        ce_channel_ids.add(int(SETUP_THOUGHTS_CHANNEL))
+
+    for channel_id in ce_channel_ids:
+        channel = bot.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await bot.fetch_channel(channel_id)
+            except Exception:
+                channel = None
+        if channel is None:
+            continue
+        try:
+            await channel.send("[ce]")
+        except Exception:
+            pass
+
     await interaction.response.send_message(
-        "Setup complete. Main channels, API settings, soul limit, owner access, Tamagotchi mode, multimodal, and DuckDuckGo search were populated from backend variables.",
+        "Setup complete. Backend settings were applied, soul memory was wiped, and `[ce]` was sent to the main chat and thoughts channels.",
         ephemeral=True,
     )
 
