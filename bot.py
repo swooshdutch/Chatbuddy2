@@ -1826,8 +1826,8 @@ async def set_tama_hatch_prompt(interaction: discord.Interaction, prompt: str):
     max="Max poop count before cap",
     food_threshold="Food consumed before a poop timer is queued",
     poop_timer_max_minutes="Max random poop timer length in minutes",
-    health_damage="HP lost per poop per damage interval",
-    interval="Seconds between poop damage ticks (default 600 = 10min)",
+    health_damage="Extra sickness damage per poop on each turn",
+    interval="Seconds before uncleared poop makes the bot sick",
 )
 @app_commands.default_permissions(administrator=True)
 async def set_tama_dirt(
@@ -1851,13 +1851,15 @@ async def set_tama_dirt(
     bot_config["tama_dirt_poop_timer_max_minutes"] = poop_timer_max_minutes
     bot_config["tama_dirt_health_damage"] = health_damage
     bot_config["tama_dirt_damage_interval"] = interval
+    bot_config["tama_dirt_grace_until"] = 0.0
     save_config(bot_config)
-    # Restart dirt task with new interval
+    # Re-sync the dirt grace timer with the new settings.
     if tama_manager:
-        tama_manager._start_dirt_task()
+        tama_manager._sync_dirt_grace()
     await interaction.response.send_message(
         f"✅ Dirtiness: max **{max}** 💩, queue a poop timer every **{food_threshold}** food, "
-        f"random timer **1-{poop_timer_max_minutes} min**, **{health_damage}** HP/poop every **{interval}s**.",
+        f"random timer **1-{poop_timer_max_minutes} min**, sickness after **{interval}s** dirty, "
+        f"and **{health_damage}** extra sickness damage per poop.",
         ephemeral=True,
     )
 
@@ -2192,7 +2194,9 @@ async def show_tama_stats(interaction: discord.Interaction):
         f"recharge: +{c.get('tama_energy_recharge_amount', 0.5)} every {c.get('tama_energy_recharge_interval', 300)}s idle)\n"
         f"• 💩 Dirt: {c.get('tama_dirt', 0)}/{c.get('tama_dirt_max', 4)}"
         f"  (queue timer every {c.get('tama_dirt_food_threshold', 5)} food, counter: {c.get('tama_dirt_food_counter', 0)}, "
-        f"timer max: {c.get('tama_dirt_poop_timer_max_minutes', 5)}m)\n"
+        f"timer max: {c.get('tama_dirt_poop_timer_max_minutes', 5)}m, "
+        f"sick after {c.get('tama_dirt_damage_interval', 600)}s, "
+        f"+{c.get('tama_dirt_health_damage', 0.5)} dmg/poop while sick)\n"
         f"• 💀 Sick: {sick} (dmg: {c.get('tama_sick_health_damage', 0.5)}/turn, "
         f"happiness x{c.get('tama_sick_happiness_multiplier', 2.0)})\n"
         f"• 🥚 Hatching: {hatching} (duration: {c.get('tama_egg_hatch_time', 30)}s)\n\n"
@@ -2256,6 +2260,8 @@ async def dev_set_stats(
     if sick is not None:
         bot_config["tama_sick"] = sick
     save_config(bot_config)
+    if tama_manager and (dirt is not None or sick is not None):
+        tama_manager._sync_dirt_grace()
     await interaction.response.send_message(
         "✅ Current Tamagotchi stats updated for testing.", ephemeral=True
     )

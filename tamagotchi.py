@@ -145,6 +145,7 @@ def reset_tamagotchi_state(config: dict) -> None:
     config["tama_satiation"] = 0.0
     config["tama_dirt"] = 0
     config["tama_dirt_food_counter"] = 0
+    config["tama_dirt_grace_until"] = 0.0
     config["tama_feed_energy_counter"] = 0
     config["tama_drink_energy_counter"] = 0
     config["tama_sick"] = False
@@ -162,7 +163,7 @@ class TamagotchiManager:
       â€¢ Global button cooldowns  (dict[str, float] â€” action â†’ timestamp)
       â€¢ Satiation timer           (asyncio.Task or None)
       â€¢ Satiation expiry epoch    (float â€” 0.0 if inactive)
-      â€¢ Poop-damage background    (asyncio.Task or None)
+      â€¢ Poop grace timer          (asyncio.Task or None)
       â€¢ RPS pending games         (dict[int, str] â€” message_id â†’ bot_choice)
     """
 
@@ -191,7 +192,7 @@ class TamagotchiManager:
             self._resume_hatching_state()
             if self.config.get("tama_satiation", 0) >= self.config.get("tama_satiation_max", 10):
                 self.start_satiation_timer()
-            self._start_dirt_task()
+            self._sync_dirt_grace()
             self.record_interaction(save=False)
 
     def stop(self):
@@ -566,31 +567,63 @@ class TamagotchiManager:
 
     # â”€â”€ poop damage background â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+    def _clear_dirt_grace(self, *, save: bool = True):
+        self.config["tama_dirt_grace_until"] = 0.0
+        if save:
+            save_config(self.config)
+        if self._dirt_task and not self._dirt_task.done():
+            self._dirt_task.cancel()
+
     def _start_dirt_task(self):
         if self._dirt_task and not self._dirt_task.done():
             self._dirt_task.cancel()
-        self._dirt_task = asyncio.create_task(self._dirt_damage_loop())
+        self._dirt_task = asyncio.create_task(self._dirt_grace_loop())
 
-    async def _dirt_damage_loop(self):
+    def _sync_dirt_grace(self):
+        if not self.config.get("tama_enabled", False):
+            self._clear_dirt_grace(save=False)
+            return
+
+        dirt = int(self.config.get("tama_dirt", 0) or 0)
+        if dirt <= 0 or self.config.get("tama_sick", False):
+            self._clear_dirt_grace()
+            return
+
+        grace_until = float(self.config.get("tama_dirt_grace_until", 0.0) or 0.0)
+        now = time.time()
+        if grace_until <= 0.0:
+            interval = max(10, int(self.config.get("tama_dirt_damage_interval", 600)))
+            self.config["tama_dirt_grace_until"] = now + interval
+            save_config(self.config)
+        elif grace_until <= now:
+            self.config["tama_sick"] = True
+            self.config["tama_dirt_grace_until"] = 0.0
+            save_config(self.config)
+            if self._dirt_task and not self._dirt_task.done():
+                self._dirt_task.cancel()
+            return
+
+        self._start_dirt_task()
+
+    async def _dirt_grace_loop(self):
         try:
-            while True:
-                interval = self.config.get("tama_dirt_damage_interval", 600)
-                await asyncio.sleep(interval)
-                if not self.config.get("tama_enabled", False):
-                    continue
-                dirt = self.config.get("tama_dirt", 0)
-                if dirt <= 0:
-                    continue
-                multiplier = 2.0 if float(self.config.get("tama_energy", 0.0) or 0.0) <= 0.0 else 1.0
-                dmg = self.config.get("tama_dirt_health_damage", 0.5) * dirt * multiplier
-                self.config["tama_health"] = max(
-                    0.0, round(self.config.get("tama_health", 0) - dmg, 2)
-                )
+            grace_until = float(self.config.get("tama_dirt_grace_until", 0.0) or 0.0)
+            remaining = max(0.0, grace_until - time.time())
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+            if not self.config.get("tama_enabled", False):
+                return
+            if int(self.config.get("tama_dirt", 0) or 0) <= 0:
+                self.config["tama_dirt_grace_until"] = 0.0
                 save_config(self.config)
-                # Check death
-                if self.config["tama_health"] <= 0:
-                    death_msg = trigger_death(self.config)
-                    await _broadcast_death_and_message(self.bot, self.config, death_msg)
+                return
+            if self.config.get("tama_sick", False):
+                self.config["tama_dirt_grace_until"] = 0.0
+                save_config(self.config)
+                return
+            self.config["tama_sick"] = True
+            self.config["tama_dirt_grace_until"] = 0.0
+            save_config(self.config)
         except asyncio.CancelledError:
             return
 
@@ -618,6 +651,7 @@ class TamagotchiManager:
         max_dirt = int(self.config.get("tama_dirt_max", 4))
         self.config["tama_dirt"] = min(max_dirt, int(self.config.get("tama_dirt", 0)) + 1)
         save_config(self.config)
+        self._sync_dirt_grace()
 
         if not channel_id:
             return
@@ -721,11 +755,17 @@ def deplete_stats(config: dict) -> str | None:
     # â”€â”€ Sickness damage â”€â”€
     if config.get("tama_sick", False):
         health_loss += config.get("tama_sick_health_damage", 0.5) * multiplier
+        dirt = int(config.get("tama_dirt", 0) or 0)
+        if dirt > 0:
+            health_loss += float(config.get("tama_dirt_health_damage", 0.5)) * dirt * multiplier
 
     if health_loss > 0:
         config["tama_health"] = max(
             0.0, round(config.get("tama_health", 0) - health_loss, 2)
         )
+
+    if config.get("tama_sick", False):
+        config["tama_dirt_grace_until"] = 0.0
 
     save_config(config)
 
@@ -1285,7 +1325,9 @@ class CleanButton(ui.Button):
             return
 
         self.config["tama_dirt"] = 0
+        self.config["tama_dirt_grace_until"] = 0.0
         save_config(self.config)
+        self.manager._clear_dirt_grace(save=False)
         self.manager.set_cooldown("clean", self.config.get("tama_cd_clean", 60))
         msg = self.config.get("tama_resp_clean", "🚿 Squeaky clean!")
         await interaction.response.send_message(

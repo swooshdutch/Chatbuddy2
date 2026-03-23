@@ -209,7 +209,7 @@ The Tamagotchi system is fully script-driven. The LLM is informed of current sta
 | `/set-tama-rest` | Set sleep duration and rest button cooldown |
 | `/set-tama-hatch-time` | Set how long the egg takes to hatch |
 | `/set-tama-hatch-prompt` | Set the hidden prompt the bot receives when the egg hatches |
-| `/set-tama-dirt` | Set max dirt, food threshold for poop timers, poop timer max length, health damage, and damage interval |
+| `/set-tama-dirt` | Set max dirt, food threshold for poop timers, poop timer max length, sickness grace time, and extra sick damage per poop |
 | `/set-tama-sickness` | Set health damage per turn while sick and the sickness happiness multiplier |
 
 #### Button Configuration
@@ -268,8 +268,8 @@ The Tamagotchi system is fully script-driven. The LLM is informed of current sta
 15. When the bot is sick, its happiness loss is multiplied by the configured sickness multiplier and sickness also drains HP every turn.
 16. Medicine is allowed while the bot is sick or while health is below max. It cures sickness, restores configurable HP, and costs configurable happiness.
 17. Dirt no longer appears instantly. After the configured food threshold is reached, one or more hidden poop timers are queued. Each timer picks a random whole-minute delay from `1` up to the configured max and posts a script-only poop message when it pops.
-18. Uncleaned dirt damages health on its own timer.
-19. Health drops when core stats are below threshold, when sickness is active, and when dirt is left uncleared.
+18. Uncleaned dirt gets a grace period. If poop is not cleaned before that timer expires, the bot becomes sick.
+19. Health drops when core stats are below threshold and when sickness is active. While sick, each poop adds extra per-turn health damage on top of the normal sickness damage.
 20. If health reaches `0`, the Tamagotchi dies, soul memory is wiped, `[ce]` is broadcast, and a fresh egg starts hatching.
 21. Error messages such as cooldown, satiated, healthy/full-health medicine rejection, already clean, and no-energy are ephemeral and only shown to the user who triggered them.
 22. The visible public stat footer is stripped from stored chat context before messages are sent back to the LLM, which avoids wasting tokens and prevents hallucinated self-reported stats.

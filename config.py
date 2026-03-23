@@ -135,6 +135,7 @@ DEFAULTS = {
     "tama_dirt_food_counter": 0,
     "tama_dirt_health_damage": 0.5,
     "tama_dirt_damage_interval": 600,
+    "tama_dirt_grace_until": 0.0,
     "tama_dirt_poop_timer_max_minutes": 5,
     # Sickness (boolean flag)
     "tama_sick": False,
