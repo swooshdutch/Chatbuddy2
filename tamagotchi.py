@@ -1,5 +1,5 @@
-"""
-tamagotchi.py — Gamified Tamagotchi system for ChatBuddy.
+﻿"""
+tamagotchi.py â€” Gamified Tamagotchi system for ChatBuddy.
 
 Handles all Tamagotchi stats, Discord button UI (stat display + action
 buttons), cooldowns, satiation timer, poop background damage, the
@@ -16,9 +16,9 @@ from discord import ui
 from config import save_config
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Helpers
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _fs(val: float) -> str:
     """Format a stat value: integer if whole, else up to 2 decimals."""
@@ -60,18 +60,18 @@ def can_use_energy(config: dict) -> bool:
     return float(config.get("tama_energy", 0.0) or 0.0) > 0.0
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TamagotchiManager  — runtime state that doesn't belong in config.json
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# TamagotchiManager  â€” runtime state that doesn't belong in config.json
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class TamagotchiManager:
     """
     Manages ephemeral runtime state:
-      • Global button cooldowns  (dict[str, float] — action → timestamp)
-      • Satiation timer           (asyncio.Task or None)
-      • Satiation expiry epoch    (float — 0.0 if inactive)
-      • Poop-damage background    (asyncio.Task or None)
-      • RPS pending games         (dict[int, str] — message_id → bot_choice)
+      â€¢ Global button cooldowns  (dict[str, float] â€” action â†’ timestamp)
+      â€¢ Satiation timer           (asyncio.Task or None)
+      â€¢ Satiation expiry epoch    (float â€” 0.0 if inactive)
+      â€¢ Poop-damage background    (asyncio.Task or None)
+      â€¢ RPS pending games         (dict[int, str] â€” message_id â†’ bot_choice)
     """
 
     def __init__(self, bot: discord.Client, config: dict):
@@ -87,7 +87,7 @@ class TamagotchiManager:
         self._sleep_expiry: float = 0.0
         self._rps_games: dict[int, str] = {}        # msg_id -> bot_choice
 
-    # ── lifecycle ─────────────────────────────────────────────────────────
+    # â”€â”€ lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def start(self):
         """Start background tasks if tama is enabled."""
@@ -108,7 +108,7 @@ class TamagotchiManager:
         if self._sleep_task and not self._sleep_task.done():
             self._sleep_task.cancel()
 
-    # ── cooldowns ─────────────────────────────────────────────────────────
+    # â”€â”€ cooldowns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def check_cooldown(self, action: str) -> float:
         """
@@ -122,7 +122,7 @@ class TamagotchiManager:
     def set_cooldown(self, action: str, seconds: int):
         self._cooldowns[action] = time.time() + seconds
 
-    # —— interaction / energy recharge ——–––––––––––––––––––––––––––––––––––
+    # â€”â€” interaction / energy recharge â€”â€”â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“
 
     def record_interaction(self, *, save: bool = True):
         if not self.config.get("tama_enabled", False):
@@ -153,7 +153,7 @@ class TamagotchiManager:
         except asyncio.CancelledError:
             return
 
-    # —— sleep / rest ——––––––––––––––––––––––––––––––––––––––––––––––––––––
+    # â€”â€” sleep / rest â€”â€”â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“â€“
 
     @property
     def sleeping(self) -> bool:
@@ -198,7 +198,7 @@ class TamagotchiManager:
             return
         self.finish_rest()
 
-    # ── satiation timer ───────────────────────────────────────────────────
+    # â”€â”€ satiation timer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @property
     def satiation_active(self) -> bool:
@@ -242,10 +242,10 @@ class TamagotchiManager:
                 save_config(self.config)
         except asyncio.CancelledError:
             return
-        # Timer expired — reset satiation to 0
+        # Timer expired â€” reset satiation to 0
         self._satiation_expiry = 0.0
 
-    # ── poop damage background ────────────────────────────────────────────
+    # â”€â”€ poop damage background â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _start_dirt_task(self):
         if self._dirt_task and not self._dirt_task.done():
@@ -276,9 +276,9 @@ class TamagotchiManager:
             return
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Stat Logic
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def deplete_stats(config: dict) -> str | None:
     """
@@ -329,12 +329,12 @@ def deplete_stats(config: dict) -> str | None:
     config["tama_satiation"] = max(
         0.0,
         round(
-            config.get("tama_satiation", 0) - (config.get("tama_satiation_depletion", 0.2) * multiplier),
+            config.get("tama_satiation", 0) - (config.get("tama_satiation_depletion", 0.1) * multiplier),
             2,
         ),
     )
 
-    # ── Health damage from stats below threshold ──
+    # â”€â”€ Health damage from stats below threshold â”€â”€
     threshold = config.get("tama_health_threshold", 2.0)
     dmg_per = config.get("tama_health_damage_per_stat", 1.0) * multiplier
     health_loss = 0.0
@@ -342,7 +342,7 @@ def deplete_stats(config: dict) -> str | None:
         if config.get(stat_key, 0) < threshold:
             health_loss += dmg_per
 
-    # ── Sickness damage ──
+    # â”€â”€ Sickness damage â”€â”€
     if config.get("tama_sick", False):
         health_loss += config.get("tama_sick_health_damage", 0.5) * multiplier
 
@@ -361,7 +361,7 @@ def deplete_stats(config: dict) -> str | None:
 
 
 def deplete_energy_game(config: dict):
-    """Called when a game (e.g. RPS) is played — deducts game energy cost."""
+    """Called when a game (e.g. RPS) is played â€” deducts game energy cost."""
     if not config.get("tama_enabled", False):
         return
     multiplier = 2.0 if float(config.get("tama_energy", 0.0) or 0.0) <= 0.0 else 1.0
@@ -375,9 +375,9 @@ def deplete_energy_game(config: dict):
     save_config(config)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Death / Reset
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def trigger_death(config: dict) -> str:
     """
@@ -387,9 +387,9 @@ def trigger_death(config: dict) -> str:
     try:
         with open("soul.md", "w", encoding="utf-8") as f:
             f.write("{}")
-        print("[Tamagotchi] DEATH — soul.md wiped.")
+        print("[Tamagotchi] DEATH â€” soul.md wiped.")
     except Exception as e:
-        print(f"[Tamagotchi] DEATH — Failed to wipe soul.md: {e}")
+        print(f"[Tamagotchi] DEATH â€” Failed to wipe soul.md: {e}")
 
     config["tama_hunger"] = float(config.get("tama_hunger_max", 10))
     config["tama_thirst"] = float(config.get("tama_thirst_max", 10))
@@ -399,6 +399,8 @@ def trigger_death(config: dict) -> str:
     config["tama_satiation"] = 0.0
     config["tama_dirt"] = 0
     config["tama_dirt_food_counter"] = 0
+    config["tama_feed_energy_counter"] = 0
+    config["tama_drink_energy_counter"] = 0
     config["tama_sick"] = False
     config["tama_sleeping"] = False
     config["tama_sleep_until"] = 0.0
@@ -409,7 +411,7 @@ def trigger_death(config: dict) -> str:
         return custom
     return (
         "💀 **The Tamagotchi has died!** 💀\n"
-        "Its soul has been wiped clean… all memories are gone.\n"
+        "Its soul has been wiped clean... all memories are gone.\n"
         "Stats have been reset. Take better care of it this time!"
     )
 
@@ -456,9 +458,9 @@ async def _broadcast_death_and_message(bot, config: dict, death_msg: str):
     await broadcast_death(bot, config)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # System Prompt Injection
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def build_tamagotchi_system_prompt(config: dict) -> str:
     """Build the system-prompt injection describing current Tamagotchi state."""
@@ -484,7 +486,7 @@ def build_tamagotchi_system_prompt(config: dict) -> str:
     max_dirt    = config.get("tama_dirt_max", 4)
 
     lines = [
-        "[TAMAGOTCHI STATUS — Your virtual pet stats. "
+        "[TAMAGOTCHI STATUS â€” Your virtual pet stats. "
         "These are managed by script; you cannot change them yourself.",
         f"Hunger: {_fs(hunger)}/{max_hunger}",
         f"Thirst: {_fs(thirst)}/{max_thirst}",
@@ -498,7 +500,7 @@ def build_tamagotchi_system_prompt(config: dict) -> str:
         "Users interact via buttons (feed, drink, play, medicate, clean). "
         "Your stats decrease each time you respond. "
         "When energy hits 0 you must rest before playing again, and all stat loss is doubled until you do. "
-        "If your health reaches 0, you die — your soul is wiped and stats reset.]",
+        "If your health reaches 0, you die â€” your soul is wiped and stats reset.]",
     ]
     return "\n".join(lines)
 
@@ -508,24 +510,24 @@ def build_tamagotchi_message_footer(config: dict, manager: TamagotchiManager | N
     if not config.get("tama_enabled", False):
         return ""
 
-    sat_text = f"🤰 {_fs(config.get('tama_satiation', 0))}/{config.get('tama_satiation_max', 10)}"
+    sat_text = f"ðŸ¤° {_fs(config.get('tama_satiation', 0))}/{config.get('tama_satiation_max', 10)}"
     if manager and manager.satiation_active:
-        sat_text = f"🤰 {_fmt_countdown(manager.satiation_remaining)}"
+        sat_text = f"ðŸ¤° {_fmt_countdown(manager.satiation_remaining)}"
 
     parts = [
-        f"🍔 {_fs(config.get('tama_hunger', 0))}/{config.get('tama_hunger_max', 10)}",
-        f"🥤 {_fs(config.get('tama_thirst', 0))}/{config.get('tama_thirst_max', 10)}",
-        f"😊 {_fs(config.get('tama_happiness', 0))}/{config.get('tama_happiness_max', 10)}",
-        f"❤️ {_fs(config.get('tama_health', 0))}/{config.get('tama_health_max', 10)}",
+        f"ðŸ” {_fs(config.get('tama_hunger', 0))}/{config.get('tama_hunger_max', 10)}",
+        f"ðŸ¥¤ {_fs(config.get('tama_thirst', 0))}/{config.get('tama_thirst_max', 10)}",
+        f"ðŸ˜Š {_fs(config.get('tama_happiness', 0))}/{config.get('tama_happiness_max', 10)}",
+        f"â¤ï¸ {_fs(config.get('tama_health', 0))}/{config.get('tama_health_max', 10)}",
         sat_text,
-        f"⚡ {_fs(config.get('tama_energy', 0))}/{config.get('tama_energy_max', 10)}",
-        f"💩 {config.get('tama_dirt', 0)}/{config.get('tama_dirt_max', 4)}",
+        f"âš¡ {_fs(config.get('tama_energy', 0))}/{config.get('tama_energy_max', 10)}",
+        f"ðŸ’© {config.get('tama_dirt', 0)}/{config.get('tama_dirt_max', 4)}",
     ]
 
     if config.get("tama_sick", False):
-        parts.append("💀 Sick")
+        parts.append("ðŸ’€ Sick")
     if manager and manager.sleeping:
-        parts.append(f"💤 {_fmt_countdown(manager.sleep_remaining)}")
+        parts.append(f"ðŸ’¤ {_fmt_countdown(manager.sleep_remaining)}")
 
     return "\n> -# **" + " | ".join(parts) + "**"
 
@@ -539,9 +541,9 @@ def append_tamagotchi_footer(text: str, config: dict, manager: TamagotchiManager
     return text.rstrip() + footer
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Discord UI — Stat Display Buttons (grey, non-interactive)
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# Discord UI â€” Stat Display Buttons (grey, non-interactive)
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class TamagotchiView(ui.View):
     """
@@ -557,7 +559,7 @@ class TamagotchiView(ui.View):
         self._build()
 
     def _build(self):
-        # ── Row 0 + 1: Stat display buttons (grey, disabled) ──
+        # â”€â”€ Row 0 + 1: Stat display buttons (grey, disabled) â”€â”€
         hunger    = self.config.get("tama_hunger", 0)
         thirst    = self.config.get("tama_thirst", 0)
         happiness = self.config.get("tama_happiness", 0)
@@ -577,27 +579,27 @@ class TamagotchiView(ui.View):
 
         # Satiation display: show countdown if timer active, else number
         if self.manager.satiation_active:
-            sat_label = f"🤰 {_fmt_countdown(self.manager.satiation_remaining)}"
+            sat_label = f"ðŸ¤° {_fmt_countdown(self.manager.satiation_remaining)}"
         else:
             satiation = self.config.get("tama_satiation", 0)
-            sat_label = f"🤰 {_fs(satiation)}/{max_sat}"
+            sat_label = f"ðŸ¤° {_fs(satiation)}/{max_sat}"
 
         stat_items = [
-            (f"🍔 {_fs(hunger)}/{max_hunger}", 0),
-            (f"🥤 {_fs(thirst)}/{max_thirst}", 0),
-            (f"😊 {_fs(happiness)}/{max_happy}", 0),
-            (f"❤️ {_fs(health)}/{max_health}", 0),
+            (f"ðŸ” {_fs(hunger)}/{max_hunger}", 0),
+            (f"ðŸ¥¤ {_fs(thirst)}/{max_thirst}", 0),
+            (f"ðŸ˜Š {_fs(happiness)}/{max_happy}", 0),
+            (f"â¤ï¸ {_fs(health)}/{max_health}", 0),
             (sat_label, 0),
             # Row 1
-            (f"⚡ {_fs(energy)}/{max_energy}", 1),
-            (f"💩 {dirt}/{max_dirt}", 1),
+            (f"âš¡ {_fs(energy)}/{max_energy}", 1),
+            (f"ðŸ’© {dirt}/{max_dirt}", 1),
         ]
 
         # Conditionally add sickness icon
         if sick:
-            stat_items.append(("💀 Sick", 1))
+            stat_items.append(("ðŸ’€ Sick", 1))
         if sleeping:
-            stat_items.append((f"💤 {_fmt_countdown(self.manager.sleep_remaining)}", 1))
+            stat_items.append((f"ðŸ’¤ {_fmt_countdown(self.manager.sleep_remaining)}", 1))
 
         for label, row in []:
             btn = ui.Button(
@@ -608,7 +610,7 @@ class TamagotchiView(ui.View):
             )
             self.add_item(btn)
 
-        # ── Row 2: Action buttons ──
+        # â”€â”€ Row 2: Action buttons â”€â”€
         self.add_item(FeedButton(self.config, self.manager))
         self.add_item(DrinkButton(self.config, self.manager))
         self.add_item(PlayButton(self.config, self.manager))
@@ -618,22 +620,22 @@ class TamagotchiView(ui.View):
             self.add_item(RestButton(self.config, self.manager))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Action Buttons
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 async def _send_sleep_block(interaction: discord.Interaction, config: dict):
     await interaction.response.send_message(build_sleeping_message(config), ephemeral=True)
 
 
 def _no_energy_message(config: dict) -> str:
-    return config.get("tama_resp_no_energy", "⚡ I'm out of energy and need a rest first!")
+    return config.get("tama_resp_no_energy", "âš¡ I'm out of energy and need a rest first!")
 
 
 class FeedButton(ui.Button):
     def __init__(self, config, manager):
         super().__init__(
-            label="🍔 Feed",
+            label="ðŸ” Feed",
             style=discord.ButtonStyle.success,
             custom_id="tama_feed",
             row=2,
@@ -677,6 +679,18 @@ class FeedButton(ui.Button):
         self.config["tama_satiation"] = min(
             float(max_sat), round(self.config.get("tama_satiation", 0) + sat_inc, 2)
         )
+
+        food_energy_counter = int(self.config.get("tama_feed_energy_counter", 0)) + 1
+        food_energy_every = max(1, int(self.config.get("tama_feed_energy_every", 3)))
+        self.config["tama_feed_energy_counter"] = food_energy_counter
+        if food_energy_counter >= food_energy_every:
+            self.config["tama_feed_energy_counter"] = 0
+            energy_gain = max(0.0, float(self.config.get("tama_feed_energy_gain", 0.2)))
+            max_energy = float(self.config.get("tama_energy_max", 10))
+            self.config["tama_energy"] = min(
+                max_energy,
+                round(float(self.config.get("tama_energy", 0)) + energy_gain, 2),
+            )
 
         # Poop counter
         self.config["tama_dirt_food_counter"] = self.config.get("tama_dirt_food_counter", 0) + 1
@@ -741,6 +755,18 @@ class DrinkButton(ui.Button):
             float(max_sat), round(self.config.get("tama_satiation", 0) + sat_inc, 2)
         )
 
+        drink_energy_counter = int(self.config.get("tama_drink_energy_counter", 0)) + 1
+        drink_energy_every = max(1, int(self.config.get("tama_drink_energy_every", 3)))
+        self.config["tama_drink_energy_counter"] = drink_energy_counter
+        if drink_energy_counter >= drink_energy_every:
+            self.config["tama_drink_energy_counter"] = 0
+            energy_gain = max(0.0, float(self.config.get("tama_drink_energy_gain", 0.1)))
+            max_energy = float(self.config.get("tama_energy_max", 10))
+            self.config["tama_energy"] = min(
+                max_energy,
+                round(float(self.config.get("tama_energy", 0)) + energy_gain, 2),
+            )
+
         self.manager.sync_satiation_timer()
 
         save_config(self.config)
@@ -755,12 +781,12 @@ class DrinkButton(ui.Button):
 class PlayButton(ui.Button):
     def __init__(self, config, manager):
         super().__init__(
-            label="🎮 Play",
+            label="ðŸŽ® Play",
             style=discord.ButtonStyle.secondary,
             custom_id="tama_play",
             row=2,
         )
-        # Override secondary → use blurple-ish. Discord doesn't have yellow,
+        # Override secondary â†’ use blurple-ish. Discord doesn't have yellow,
         # so we use secondary (grey) with the emoji to distinguish.
         # Actually, let's explicitly set a style that is visually distinct.
         # Discord button styles: primary=blue, secondary=grey, success=green, danger=red.
@@ -815,10 +841,10 @@ class PlayButton(ui.Button):
 
         # Start RPS minigame
         bot_choice = random.choice(["rock", "paper", "scissors"])
-        msg = self.config.get("tama_resp_play", "🎮 Let's play!")
+        msg = self.config.get("tama_resp_play", "ðŸŽ® Let's play!")
         rps_view = RPSView(self.config, self.manager, bot_choice)
         await interaction.response.send_message(
-            f"{msg}\n**Rock, Paper, Scissors — pick your move!**",
+            f"{msg}\n**Rock, Paper, Scissors â€” pick your move!**",
             view=rps_view,
             ephemeral=True,
         )
@@ -827,7 +853,7 @@ class PlayButton(ui.Button):
 class MedicateButton(ui.Button):
     def __init__(self, config, manager):
         super().__init__(
-            label="💉 Medicate",
+            label="ðŸ’‰ Medicate",
             style=discord.ButtonStyle.danger,
             custom_id="tama_medicate",
             row=2,
@@ -857,7 +883,7 @@ class MedicateButton(ui.Button):
         self.config["tama_sick"] = False
         save_config(self.config)
         self.manager.set_cooldown("medicate", self.config.get("tama_cd_medicate", 60))
-        msg = self.config.get("tama_resp_medicate", "💊 Feeling better!")
+        msg = self.config.get("tama_resp_medicate", "ðŸ’Š Feeling better!")
         await interaction.response.send_message(
             append_tamagotchi_footer(msg, self.config, self.manager),
             view=TamagotchiView(self.config, self.manager),
@@ -867,7 +893,7 @@ class MedicateButton(ui.Button):
 class CleanButton(ui.Button):
     def __init__(self, config, manager):
         super().__init__(
-            label="🚿 Clean",
+            label="ðŸš¿ Clean",
             style=discord.ButtonStyle.primary,
             custom_id="tama_clean",
             row=2,
@@ -897,24 +923,24 @@ class CleanButton(ui.Button):
         self.config["tama_dirt"] = 0
         save_config(self.config)
         self.manager.set_cooldown("clean", self.config.get("tama_cd_clean", 60))
-        msg = self.config.get("tama_resp_clean", "🚿 Squeaky clean!")
+        msg = self.config.get("tama_resp_clean", "ðŸš¿ Squeaky clean!")
         await interaction.response.send_message(
             append_tamagotchi_footer(msg, self.config, self.manager),
             view=TamagotchiView(self.config, self.manager),
         )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Rock-Paper-Scissors Minigame
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-_RPS_EMOJI = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
+_RPS_EMOJI = {"rock": "ðŸª¨", "paper": "ðŸ“„", "scissors": "âœ‚ï¸"}
 
 
 class RestButton(ui.Button):
     def __init__(self, config, manager):
         super().__init__(
-            label="💤 Rest",
+            label="ðŸ’¤ Rest",
             style=discord.ButtonStyle.secondary,
             custom_id="tama_rest",
             row=3,
@@ -938,8 +964,8 @@ class RestButton(ui.Button):
 
         self.manager.begin_rest()
         self.manager.set_cooldown("rest", self.config.get("tama_cd_rest", 60))
-        msg = self.config.get("tama_resp_rest", "💤 Tucking in for a recharge. See you soon!")
-        msg += f"\n⏳ {_fmt_countdown(self.manager.sleep_remaining)}"
+        msg = self.config.get("tama_resp_rest", "ðŸ’¤ Tucking in for a recharge. See you soon!")
+        msg += f"\nâ³ {_fmt_countdown(self.manager.sleep_remaining)}"
         await interaction.response.send_message(
             append_tamagotchi_footer(msg, self.config, self.manager),
             view=TamagotchiView(self.config, self.manager),
@@ -968,11 +994,11 @@ class RPSView(ui.View):
         b_emoji = _RPS_EMOJI[self.bot_choice]
 
         if result == "win":
-            text = f"You chose {u_emoji}, I chose {b_emoji} — **You win!** 🎉"
+            text = f"You chose {u_emoji}, I chose {b_emoji} â€” **You win!** ðŸŽ‰"
         elif result == "lose":
-            text = f"You chose {u_emoji}, I chose {b_emoji} — **I win!** 😈"
+            text = f"You chose {u_emoji}, I chose {b_emoji} â€” **I win!** ðŸ˜ˆ"
         else:
-            text = f"You chose {u_emoji}, I chose {b_emoji} — **It's a draw!** 🤝"
+            text = f"You chose {u_emoji}, I chose {b_emoji} â€” **It's a draw!** ðŸ¤"
 
         # Edit the original ephemeral message to show the result privately
         await interaction.response.edit_message(content=text, view=None)
@@ -981,7 +1007,7 @@ class RPSView(ui.View):
         channel = interaction.channel
         if channel:
             public_text = (
-                f"🎮 **Rock Paper Scissors** — {interaction.user.display_name} vs Bot\n"
+                f"ðŸŽ® **Rock Paper Scissors** â€” {interaction.user.display_name} vs Bot\n"
                 f"{text}"
             )
             await channel.send(
@@ -991,14 +1017,15 @@ class RPSView(ui.View):
 
         self.stop()
 
-    @ui.button(label="Rock", emoji="🪨", style=discord.ButtonStyle.primary, row=0)
+    @ui.button(label="Rock", emoji="ðŸª¨", style=discord.ButtonStyle.primary, row=0)
     async def rock_btn(self, interaction: discord.Interaction, button: ui.Button):
         await self._play(interaction, "rock")
 
-    @ui.button(label="📄 Paper", style=discord.ButtonStyle.success, row=0)
+    @ui.button(label="ðŸ“„ Paper", style=discord.ButtonStyle.success, row=0)
     async def paper_btn(self, interaction: discord.Interaction, button: ui.Button):
         await self._play(interaction, "paper")
 
-    @ui.button(label="✂️ Scissors", style=discord.ButtonStyle.danger, row=0)
+    @ui.button(label="âœ‚ï¸ Scissors", style=discord.ButtonStyle.danger, row=0)
     async def scissors_btn(self, interaction: discord.Interaction, button: ui.Button):
         await self._play(interaction, "scissors")
+

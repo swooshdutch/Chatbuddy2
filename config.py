@@ -1,5 +1,5 @@
-"""
-config.py — Persistent configuration manager for ChatBuddy.
+﻿"""
+config.py â€” Persistent configuration manager for ChatBuddy.
 Reads/writes a config.json file so settings survive Discloud restarts.
 """
 
@@ -19,7 +19,7 @@ DEFAULTS = {
     "api_context_reset_time": "00:00",
     "api_context_current_usage": 0,
     "api_context_last_reset_date": "",
-    # Dual model endpoints — one for each mode
+    # Dual model endpoints â€” one for each mode
     "model_endpoint_gemini": "gemini-2.0-flash",
     "model_endpoint_gemma": "",
     # Custom (non-Google) model support
@@ -44,7 +44,7 @@ DEFAULTS = {
     "soc_enabled": False,
     "soc_context_enabled": False,
     "soc_context_count": 10,
-    # Dynamic system prompt — appended after main prompt when enabled
+    # Dynamic system prompt â€” appended after main prompt when enabled
     "dynamic_prompt": "",
     "dynamic_prompt_enabled": False,
     # Word game
@@ -77,7 +77,7 @@ DEFAULTS = {
     "heartbeat_interval_minutes": 60,
     "heartbeat_channel_id": None,
     "heartbeat_prompt": "",
-    # ── Tamagotchi (unified gamified system) ──
+    # â”€â”€ Tamagotchi (unified gamified system) â”€â”€
     "tama_enabled": False,
     # Hunger
     "tama_hunger": 10.0,
@@ -91,7 +91,7 @@ DEFAULTS = {
     "tama_happiness": 10.0,
     "tama_happiness_max": 10,
     "tama_happiness_depletion": 0.1,
-    # Health (counts down — death at 0)
+    # Health (counts down â€” death at 0)
     "tama_health": 10.0,
     "tama_health_max": 10,
     "tama_health_damage_per_stat": 1.0,
@@ -103,7 +103,7 @@ DEFAULTS = {
     "tama_satiation_timer_decrease": 1.0,
     "tama_satiation_food_increase": 1.0,
     "tama_satiation_drink_increase": 1.0,
-    "tama_satiation_depletion": 0.2,
+    "tama_satiation_depletion": 0.1,
     # Energy
     "tama_energy": 10.0,
     "tama_energy_max": 10,
@@ -126,9 +126,15 @@ DEFAULTS = {
     # Sickness (boolean flag)
     "tama_sick": False,
     "tama_sick_health_damage": 0.5,
-    # Button actions — fill / effect amounts
+    # Button actions - fill / effect amounts
     "tama_feed_amount": 1.0,
+    "tama_feed_energy_every": 3,
+    "tama_feed_energy_gain": 0.2,
+    "tama_feed_energy_counter": 0,
     "tama_drink_amount": 1.0,
+    "tama_drink_energy_every": 3,
+    "tama_drink_energy_gain": 0.1,
+    "tama_drink_energy_counter": 0,
     "tama_play_happiness": 1.0,
     "tama_play_hunger_loss": 0.4,
     "tama_play_thirst_loss": 0.2,
@@ -168,7 +174,7 @@ def load_config() -> dict:
                 stored = json.load(f)
             config.update(stored)
         except (json.JSONDecodeError, OSError):
-            pass  # Corrupted file — use defaults
+            pass  # Corrupted file â€” use defaults
     return config
 
 
@@ -178,3 +184,4 @@ def save_config(config: dict) -> None:
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
     os.replace(tmp_path, CONFIG_FILE)
+
