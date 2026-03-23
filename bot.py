@@ -2216,7 +2216,44 @@ async def show_tama_stats(interaction: discord.Interaction):
     await interaction.response.send_message(msg, ephemeral=True)
 
 
-@bot.tree.command(name="reset-tama-stats", description="Reset all Tamagotchi stats to their max values")
+@bot.tree.command(name="dev-set-stats", description="Directly set the current Tamagotchi stats for testing")
+@app_commands.describe(
+    hunger="Current hunger value",
+    thirst="Current thirst value",
+    happiness="Current happiness value",
+    health="Current health value",
+    energy="Current energy value",
+    satiation="Current satiation value",
+    dirt="Current dirt value",
+    sick="Whether the bot is currently sick",
+)
+@app_commands.default_permissions(administrator=True)
+async def dev_set_stats(
+    interaction: discord.Interaction,
+    hunger: float,
+    thirst: float,
+    happiness: float,
+    health: float,
+    energy: float,
+    satiation: float,
+    dirt: int,
+    sick: bool,
+):
+    bot_config["tama_hunger"] = max(0.0, min(float(bot_config.get("tama_hunger_max", 10)), round(hunger, 2)))
+    bot_config["tama_thirst"] = max(0.0, min(float(bot_config.get("tama_thirst_max", 10)), round(thirst, 2)))
+    bot_config["tama_happiness"] = max(0.0, min(float(bot_config.get("tama_happiness_max", 10)), round(happiness, 2)))
+    bot_config["tama_health"] = max(0.0, min(float(bot_config.get("tama_health_max", 10)), round(health, 2)))
+    bot_config["tama_energy"] = max(0.0, min(float(bot_config.get("tama_energy_max", 10)), round(energy, 2)))
+    bot_config["tama_satiation"] = max(0.0, min(float(bot_config.get("tama_satiation_max", 10)), round(satiation, 2)))
+    bot_config["tama_dirt"] = max(0, min(int(bot_config.get("tama_dirt_max", 4)), dirt))
+    bot_config["tama_sick"] = sick
+    save_config(bot_config)
+    await interaction.response.send_message(
+        "✅ Current Tamagotchi stats updated for testing.", ephemeral=True
+    )
+
+
+@bot.tree.command(name="reset-tama-stats", description="Reset the Tamagotchi state or start a fresh egg")
 @app_commands.default_permissions(administrator=True)
 async def reset_tama_stats(interaction: discord.Interaction):
     if bot_config.get("tama_enabled", False) and tama_manager:
@@ -2522,7 +2559,8 @@ async def help_command(interaction: discord.Interaction):
             "`/set-tama-rip-message` - Custom death message\n"
             "`/set-tama-mode` and `/set-tamagotchi-mode` - Enable or disable\n"
             "`/show-tama-stats` - View all stats and config\n"
-            "`/reset-tama-stats` - Reset all stats to max\n\n"
+            "`/dev-set-stats` - Set current stats directly for testing\n"
+            "`/reset-tama-stats` - Reset the pet / start a new egg\n\n"
             "Setup, reset, and death can start a new egg hatch. While hatching, chat is blocked. "
             "Footer mood is dynamic, the skull appears while sick, medicine heals/cures, feeding "
             "can queue randomized poop timers, and rest appears below 1 energy."

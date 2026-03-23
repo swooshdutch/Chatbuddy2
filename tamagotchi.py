@@ -137,9 +137,9 @@ def wipe_soul_file() -> None:
 
 
 def reset_tamagotchi_state(config: dict) -> None:
-    config["tama_hunger"] = float(config.get("tama_hunger_max", 10))
-    config["tama_thirst"] = float(config.get("tama_thirst_max", 10))
-    config["tama_happiness"] = float(config.get("tama_happiness_max", 10))
+    config["tama_hunger"] = round(float(config.get("tama_hunger_max", 10)) * 0.5, 2)
+    config["tama_thirst"] = round(float(config.get("tama_thirst_max", 10)) * 0.5, 2)
+    config["tama_happiness"] = round(float(config.get("tama_happiness_max", 10)) * 0.5, 2)
     config["tama_health"] = float(config.get("tama_health_max", 10))
     config["tama_energy"] = float(config.get("tama_energy_max", 10))
     config["tama_satiation"] = 0.0
@@ -923,58 +923,8 @@ class TamagotchiView(ui.View):
         self._build()
 
     def _build(self):
-        # â”€â”€ Row 0 + 1: Stat display buttons (grey, disabled) â”€â”€
-        hunger    = self.config.get("tama_hunger", 0)
-        thirst    = self.config.get("tama_thirst", 0)
-        happiness = self.config.get("tama_happiness", 0)
-        health    = self.config.get("tama_health", 0)
         energy    = self.config.get("tama_energy", 0)
-        dirt      = self.config.get("tama_dirt", 0)
-        sick      = self.config.get("tama_sick", False)
-        sleeping  = self.manager.sleeping
-
-        max_hunger  = self.config.get("tama_hunger_max", 10)
-        max_thirst  = self.config.get("tama_thirst_max", 10)
-        max_happy   = self.config.get("tama_happiness_max", 10)
-        max_health  = self.config.get("tama_health_max", 10)
-        max_energy  = self.config.get("tama_energy_max", 10)
-        max_sat     = self.config.get("tama_satiation_max", 10)
-        max_dirt    = self.config.get("tama_dirt_max", 4)
-
-        # Satiation display: show countdown if timer active, else number
-        if self.manager.satiation_active:
-            sat_label = f"🤰 {_fmt_countdown(self.manager.satiation_remaining)}"
-        else:
-            satiation = self.config.get("tama_satiation", 0)
-            sat_label = f"🤰 {_fs(satiation)}/{max_sat}"
-
-        stat_items = [
-            (f"🍔 {_fs(hunger)}/{max_hunger}", 0),
-            (f"🥤 {_fs(thirst)}/{max_thirst}", 0),
-            (f"{happiness_emoji(self.config)} {_fs(happiness)}/{max_happy}", 0),
-            (f"❤️ {_fs(health)}/{max_health}", 0),
-            (sat_label, 0),
-            # Row 1
-            (f"⚡ {_fs(energy)}/{max_energy}", 1),
-            (f"💩 {dirt}/{max_dirt}", 1),
-        ]
-
-        # Conditionally add sickness icon
-        if sick:
-            stat_items.append(("💀 Sick", 1))
-        if sleeping:
-            stat_items.append((f"💤 {_fmt_countdown(self.manager.sleep_remaining)}", 1))
-
-        for label, row in stat_items:
-            btn = ui.Button(
-                label=label,
-                style=discord.ButtonStyle.secondary,
-                disabled=True,
-                row=row,
-            )
-            self.add_item(btn)
-
-        # â”€â”€ Row 2: Action buttons â”€â”€
+        # â”€â”€ Row 0: Action buttons only â”€â”€
         self.add_item(FeedButton(self.config, self.manager))
         self.add_item(DrinkButton(self.config, self.manager))
         self.add_item(PlayButton(self.config, self.manager))
@@ -1002,7 +952,7 @@ class FeedButton(ui.Button):
             label="🍔 Feed",
             style=discord.ButtonStyle.success,
             custom_id="tama_feed",
-            row=2,
+            row=0,
         )
         self.config = config
         self.manager = manager
@@ -1082,7 +1032,7 @@ class DrinkButton(ui.Button):
             label="🥤 Drink",
             style=discord.ButtonStyle.primary,
             custom_id="tama_drink",
-            row=2,
+            row=0,
         )
         self.config = config
         self.manager = manager
@@ -1151,7 +1101,7 @@ class PlayButton(ui.Button):
             label="🎮 Play",
             style=discord.ButtonStyle.secondary,
             custom_id="tama_play",
-            row=2,
+            row=0,
         )
         # Override secondary â†’ use blurple-ish. Discord doesn't have yellow,
         # so we use secondary (grey) with the emoji to distinguish.
@@ -1230,7 +1180,7 @@ class MedicateButton(ui.Button):
             label="💉 Medicate",
             style=discord.ButtonStyle.danger,
             custom_id="tama_medicate",
-            row=2,
+            row=0,
         )
         self.config = config
         self.manager = manager
@@ -1280,7 +1230,7 @@ class CleanButton(ui.Button):
             label="🚿 Clean",
             style=discord.ButtonStyle.primary,
             custom_id="tama_clean",
-            row=2,
+            row=0,
         )
         self.config = config
         self.manager = manager
@@ -1327,7 +1277,7 @@ class RestButton(ui.Button):
             label="💤 Rest",
             style=discord.ButtonStyle.secondary,
             custom_id="tama_rest",
-            row=3,
+            row=1,
         )
         self.config = config
         self.manager = manager
