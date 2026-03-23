@@ -80,18 +80,63 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "emoji": "🍔",
         "item_type": "food",
         "multiplier": 1.0,
+        "happiness_delta": 0.0,
         "button_style": "success",
         "amount": -1,
+        "lucky_gift_prize": False,
     },
     "unlimited_water": {
         "name": "Cup of Water",
         "emoji": "🥤",
         "item_type": "drink",
         "multiplier": 1.0,
+        "happiness_delta": 0.0,
         "button_style": "primary",
         "amount": -1,
+        "lucky_gift_prize": False,
+    },
+    "teddy_bear": {
+        "name": "Teddy Bear",
+        "emoji": "🧸",
+        "item_type": "misc",
+        "multiplier": 0.0,
+        "happiness_delta": 1.0,
+        "button_style": "success",
+        "amount": 0,
+        "lucky_gift_prize": True,
+    },
+    "sushi": {
+        "name": "Sushi",
+        "emoji": "🍣",
+        "item_type": "food",
+        "multiplier": 1.3,
+        "happiness_delta": 0.0,
+        "button_style": "primary",
+        "amount": 0,
+        "lucky_gift_prize": True,
+    },
+    "meat_on_bone": {
+        "name": "Meat on Bone",
+        "emoji": "🍖",
+        "item_type": "food",
+        "multiplier": 1.6,
+        "happiness_delta": 0.0,
+        "button_style": "danger",
+        "amount": 0,
+        "lucky_gift_prize": True,
+    },
+    "lump_of_coal": {
+        "name": "Lump of Coal",
+        "emoji": "⚫",
+        "item_type": "misc",
+        "multiplier": 0.0,
+        "happiness_delta": -1.0,
+        "button_style": "secondary",
+        "amount": 0,
+        "lucky_gift_prize": True,
     },
 }
+TAMA_INVENTORY_DEFAULTS_VERSION = 2
 
 BUTTON_STYLE_BY_NAME = {
     "primary": discord.ButtonStyle.primary,
@@ -120,9 +165,10 @@ def ensure_inventory_defaults(config: dict) -> bool:
         config["tama_inventory_items"] = items
 
     initialized = bool(config.get("tama_inventory_initialized", False))
+    defaults_version = int(config.get("tama_inventory_defaults_version", 0) or 0)
 
     changed = False
-    if not initialized:
+    if not initialized or defaults_version < TAMA_INVENTORY_DEFAULTS_VERSION:
         for item_id, defaults in DEFAULT_TAMA_INVENTORY_ITEMS.items():
             stored = items.get(item_id)
             if not isinstance(stored, dict):
@@ -134,6 +180,7 @@ def ensure_inventory_defaults(config: dict) -> bool:
                     stored[key] = value
                     changed = True
         config["tama_inventory_initialized"] = True
+        config["tama_inventory_defaults_version"] = TAMA_INVENTORY_DEFAULTS_VERSION
         changed = True
 
     config["tama_inventory_items"] = items
@@ -150,7 +197,7 @@ def _coerce_item_amount(value) -> int:
 
 def _normalize_inventory_item(item_id: str, raw_item: dict) -> dict:
     item_type = str(raw_item.get("item_type", "food")).strip().lower()
-    if item_type not in {"food", "drink"}:
+    if item_type not in {"food", "drink", "misc"}:
         item_type = "food"
 
     button_style = str(raw_item.get("button_style", "secondary")).strip().lower()
@@ -158,10 +205,10 @@ def _normalize_inventory_item(item_id: str, raw_item: dict) -> dict:
         button_style = "secondary"
 
     multiplier = max(0.0, float(raw_item.get("multiplier", 1.0) or 0.0))
+    happiness_delta = round(float(raw_item.get("happiness_delta", 0.0) or 0.0), 2)
     amount = _coerce_item_amount(raw_item.get("amount", 0))
-    emoji = str(raw_item.get("emoji", "🍔" if item_type == "food" else "🥤")).strip() or (
-        "🍔" if item_type == "food" else "🥤"
-    )
+    default_emoji = "🍔" if item_type == "food" else ("🥤" if item_type == "drink" else "🎁")
+    emoji = str(raw_item.get("emoji", default_emoji)).strip() or default_emoji
 
     return {
         "id": item_id,
@@ -169,10 +216,12 @@ def _normalize_inventory_item(item_id: str, raw_item: dict) -> dict:
         "emoji": emoji,
         "item_type": item_type,
         "multiplier": multiplier,
+        "happiness_delta": happiness_delta,
         "button_style": button_style,
         "amount": amount,
         "is_unlimited": amount < 0,
         "stock_text": "∞" if amount < 0 else str(amount),
+        "lucky_gift_prize": bool(raw_item.get("lucky_gift_prize", False)),
     }
 
 
@@ -218,7 +267,11 @@ def inventory_message_text(config: dict) -> str:
 
 
 def _item_action_name(item: dict) -> str:
-    return "feed" if item.get("item_type") == "food" else "drink"
+    if item.get("item_type") == "food":
+        return "feed"
+    if item.get("item_type") == "drink":
+        return "drink"
+    return ""
 
 
 def _item_default_icon(action: str) -> str:
@@ -1162,6 +1215,49 @@ def _no_energy_message(config: dict) -> str:
     return config.get("tama_resp_no_energy", "⚡ I'm out of energy and need a rest first!")
 
 
+def _lucky_gift_pool(config: dict) -> list[dict]:
+    return [item for item in get_inventory_items(config, visible_only=False) if item.get("lucky_gift_prize")]
+
+
+def _lucky_gift_countdown_text(config: dict, seconds_remaining: float) -> str:
+    return (
+        "🎁 **Lucky Gift**\n"
+        "The ribbon is rustling... something fun is hiding inside.\n"
+        f"Reveal in **{max(1, int(seconds_remaining + 0.999))}s**."
+    )
+
+
+def _apply_lucky_gift_reward(config: dict, item: dict) -> tuple[float, int]:
+    items = config.setdefault("tama_inventory_items", {})
+    item_entry = items.get(item["id"])
+    if isinstance(item_entry, dict):
+        current_amount = _coerce_item_amount(item_entry.get("amount", 0))
+        if current_amount >= 0:
+            item_entry["amount"] = current_amount + 1
+
+    happiness_delta = round(float(item.get("happiness_delta", 0.0) or 0.0), 2)
+    max_happy = float(config.get("tama_happiness_max", 10))
+    new_happiness = min(
+        max_happy,
+        max(0.0, round(float(config.get("tama_happiness", 0)) + happiness_delta, 2)),
+    )
+    config["tama_happiness"] = new_happiness
+    save_config(config)
+    awarded_amount = 1 if not item.get("is_unlimited") else 0
+    return happiness_delta, awarded_amount
+
+
+def _lucky_gift_reveal_text(item: dict, happiness_delta: float) -> str:
+    parts = [f"🎁 **Lucky Gift Opened!**", f"You got {item.get('emoji', '🎁')} **{item.get('name', 'a prize')}**."]
+    if item.get("item_type") in {"food", "drink"} and float(item.get("multiplier", 0.0) or 0.0) > 0:
+        parts.append(f"Fill multiplier: x{item.get('multiplier', 1.0)}.")
+    if happiness_delta > 0:
+        parts.append(f"Happiness +{_fs(happiness_delta)}.")
+    elif happiness_delta < 0:
+        parts.append(f"Happiness {_fs(happiness_delta)}.")
+    return "\n".join(parts)
+
+
 async def _refresh_inventory_message(
     interaction: discord.Interaction,
     config: dict,
@@ -1197,6 +1293,12 @@ async def _consume_inventory_item(
         return
 
     action = _item_action_name(item)
+    if not action:
+        await interaction.response.send_message(
+            f"{item.get('emoji', '🎁')} {item.get('name', 'This item')} can't be used from the inventory yet.",
+            ephemeral=True,
+        )
+        return
     remaining = manager.check_cooldown(action)
     if remaining > 0:
         msg = config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
@@ -1355,15 +1457,10 @@ class PlayButton(ui.Button):
     def __init__(self, config, manager):
         super().__init__(
             label="🎮 Play",
-            style=discord.ButtonStyle.secondary,
+            style=discord.ButtonStyle.success,
             custom_id="tama_play",
             row=0,
         )
-        # Override secondary â†’ use blurple-ish. Discord doesn't have yellow,
-        # so we use secondary (grey) with the emoji to distinguish.
-        # Actually, let's explicitly set a style that is visually distinct.
-        # Discord button styles: primary=blue, secondary=grey, success=green, danger=red.
-        # No yellow exists. We'll keep secondary and rely on the emoji.
         self.config = config
         self.manager = manager
 
@@ -1385,47 +1482,9 @@ class PlayButton(ui.Button):
             await interaction.response.send_message(_no_energy_message(self.config), ephemeral=True)
             return
 
-        if self.manager.satiation_active:
-            msg = self.config.get("tama_resp_full", "🤰 I'm stuffed!")
-            remaining_sat = self.manager.satiation_remaining
-            msg += f"\n⏳ Wait **{_discord_relative_time(remaining_sat)}** before playing again."
-            await interaction.response.send_message(msg, ephemeral=True)
-            return
-
-        # Apply hunger/thirst loss for playing
-        hunger_loss = self.config.get("tama_play_hunger_loss", 0.4)
-        thirst_loss = self.config.get("tama_play_thirst_loss", 0.2)
-        self.config["tama_hunger"] = max(
-            0.0, round(self.config.get("tama_hunger", 0) - hunger_loss, 2)
-        )
-        self.config["tama_thirst"] = max(
-            0.0, round(self.config.get("tama_thirst", 0) - thirst_loss, 2)
-        )
-        satiation_loss = self.config.get("tama_play_satiation_loss", 0.5)
-        self.config["tama_satiation"] = max(
-            0.0, round(self.config.get("tama_satiation", 0) - satiation_loss, 2)
-        )
-        self.manager.sync_satiation_timer()
-
-        # Happiness increase
-        happy_gain = self.config.get("tama_play_happiness", 1.0)
-        max_happy = self.config.get("tama_happiness_max", 10)
-        self.config["tama_happiness"] = min(
-            float(max_happy), round(self.config.get("tama_happiness", 0) + happy_gain, 2)
-        )
-
-        # Energy cost for game
-        deplete_energy_game(self.config)
-
-        self.manager.set_cooldown("play", self.config.get("tama_cd_play", 60))
-
-        # Start RPS minigame
-        bot_choice = random.choice(["rock", "paper", "scissors"])
-        msg = self.config.get("tama_resp_play", "🎮 Let's play!")
-        rps_view = RPSView(self.config, self.manager, bot_choice)
         await interaction.response.send_message(
-            f"{msg}\n**Rock, Paper, Scissors — pick your move!**",
-            view=rps_view,
+            "🎮 Choose a game to play.",
+            view=GameSelectView(self.config, self.manager, interaction.user.id),
             ephemeral=True,
         )
 
@@ -1587,6 +1646,135 @@ class RestButton(ui.Button):
             append_tamagotchi_footer(msg, self.config, self.manager),
             view=TamagotchiView(self.config, self.manager),
         )
+
+
+class GameSelectView(ui.View):
+    def __init__(self, config: dict, manager: TamagotchiManager, owner_id: int):
+        super().__init__(timeout=300)
+        self.config = config
+        self.manager = manager
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("This game menu belongs to someone else.", ephemeral=True)
+            return False
+        return True
+
+    @ui.button(label="RPS", emoji="✂️", style=discord.ButtonStyle.primary, row=0)
+    async def rps_btn(self, interaction: discord.Interaction, button: ui.Button):
+        self.manager.record_interaction()
+        if self.manager.sleeping:
+            await _send_sleep_block(interaction, self.config)
+            return
+        if not can_use_energy(self.config):
+            await interaction.response.send_message(_no_energy_message(self.config), ephemeral=True)
+            return
+        remaining = self.manager.check_cooldown("play")
+        if remaining > 0:
+            msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
+                "{time}", _discord_relative_time(remaining)
+            )
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        if self.manager.satiation_active:
+            msg = self.config.get("tama_resp_full", "🤰 I'm stuffed!")
+            remaining_sat = self.manager.satiation_remaining
+            msg += f"\n⏳ Wait **{_discord_relative_time(remaining_sat)}** before playing again."
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        hunger_loss = self.config.get("tama_play_hunger_loss", 0.4)
+        thirst_loss = self.config.get("tama_play_thirst_loss", 0.2)
+        self.config["tama_hunger"] = max(
+            0.0, round(self.config.get("tama_hunger", 0) - hunger_loss, 2)
+        )
+        self.config["tama_thirst"] = max(
+            0.0, round(self.config.get("tama_thirst", 0) - thirst_loss, 2)
+        )
+        satiation_loss = self.config.get("tama_play_satiation_loss", 0.5)
+        self.config["tama_satiation"] = max(
+            0.0, round(self.config.get("tama_satiation", 0) - satiation_loss, 2)
+        )
+        self.manager.sync_satiation_timer()
+
+        happy_gain = self.config.get("tama_play_happiness", 1.0)
+        max_happy = self.config.get("tama_happiness_max", 10)
+        self.config["tama_happiness"] = min(
+            float(max_happy), round(self.config.get("tama_happiness", 0) + happy_gain, 2)
+        )
+
+        deplete_energy_game(self.config)
+        self.manager.set_cooldown("play", self.config.get("tama_cd_play", 60))
+
+        bot_choice = random.choice(["rock", "paper", "scissors"])
+        msg = self.config.get("tama_resp_play", "🎮 Let's play!")
+        rps_view = RPSView(self.config, self.manager, bot_choice)
+        await interaction.response.edit_message(
+            content=f"{msg}\n**Rock, Paper, Scissors — pick your move!**",
+            view=rps_view,
+        )
+
+    @ui.button(label="Lucky Gift", emoji="🎁", style=discord.ButtonStyle.success, row=0)
+    async def lucky_gift_btn(self, interaction: discord.Interaction, button: ui.Button):
+        self.manager.record_interaction()
+        if self.manager.sleeping:
+            await _send_sleep_block(interaction, self.config)
+            return
+        if not can_use_energy(self.config):
+            await interaction.response.send_message(_no_energy_message(self.config), ephemeral=True)
+            return
+        remaining = self.manager.check_cooldown("lucky_gift")
+        if remaining > 0:
+            msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
+                "{time}", _discord_relative_time(remaining)
+            )
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        pool = _lucky_gift_pool(self.config)
+        if not pool:
+            await interaction.response.send_message("🎁 The lucky gift pool is empty right now.", ephemeral=True)
+            return
+
+        deplete_energy_game(self.config)
+        self.manager.set_cooldown("lucky_gift", self.config.get("tama_cd_lucky_gift", 600))
+
+        duration = max(1, int(self.config.get("tama_lucky_gift_duration", 30)))
+        await interaction.response.edit_message(
+            content=_lucky_gift_countdown_text(self.config, duration),
+            view=None,
+        )
+
+        for seconds_left in range(duration - 1, 0, -1):
+            await asyncio.sleep(1)
+            try:
+                await interaction.edit_original_response(
+                    content=_lucky_gift_countdown_text(self.config, seconds_left),
+                    view=None,
+                )
+            except Exception:
+                break
+
+        prize = random.choice(pool)
+        happiness_delta, _ = _apply_lucky_gift_reward(self.config, prize)
+        reveal = _lucky_gift_reveal_text(prize, happiness_delta)
+        try:
+            await interaction.edit_original_response(content=reveal, view=None)
+        except Exception:
+            pass
+
+        if interaction.channel:
+            public_text = f"🎁 **Lucky Gift** — {interaction.user.display_name} opened a gift and got {prize.get('emoji', '🎁')} **{prize.get('name', 'a prize')}**!"
+            if happiness_delta > 0:
+                public_text += f"\n😊 Happiness +{_fs(happiness_delta)}."
+            elif happiness_delta < 0:
+                public_text += f"\n☹️ Happiness {_fs(happiness_delta)}."
+            await interaction.channel.send(
+                append_tamagotchi_footer(public_text, self.config, self.manager),
+                view=TamagotchiView(self.config, self.manager),
+            )
 
 
 class RPSView(ui.View):

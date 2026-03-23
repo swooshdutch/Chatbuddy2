@@ -218,10 +218,11 @@ The Tamagotchi system is fully script-driven. The LLM is informed of current sta
 |---|---|
 | `/set-tama-feed` | Set hunger restored and cooldown for Feed |
 | `/set-tama-drink` | Set thirst restored and cooldown for Drink |
-| `/add-tama-item` | Add or update a Tamagotchi food or drink inventory item, including multiplier, stock, emoji, and button color |
+| `/add-tama-item` | Add or update a Tamagotchi inventory item, including multiplier, stock, emoji, button color, happiness amount, and Lucky Gift pool membership |
 | `/show-tama-items` | Show all configured Tamagotchi inventory items and current stock |
 | `/remove-tama-item` | Remove a Tamagotchi inventory item |
 | `/set-tama-play` | Set happiness gain, hunger/thirst loss, satiation loss, and cooldown for Play |
+| `/set-tama-lucky-gift` | Set Lucky Gift cooldown and reveal countdown |
 | `/set-tama-medicate` | Set cooldown, HP heal amount, and happiness cost for Medicate |
 | `/set-tama-clean` | Set cooldown for Clean |
 
@@ -260,23 +261,25 @@ The Tamagotchi system is fully script-driven. The LLM is informed of current sta
 4. A newly hatched bot starts with full health, but hunger, thirst, and happiness begin at 50% of their configured max values.
 5. Public bot messages use the compact quoted stat footer as the visible stat display. Happiness uses a dynamic emoji based on its current percent, and a skull icon appears whenever the bot is sick.
 6. Inventory, Play, Medicate, Clean, and Rest buttons are attached to public Tamagotchi messages.
-7. Play launches a Rock-Paper-Scissors minigame. Intermediate choices stay private to the player; the final result is public.
-8. Food and drink are consumed from the user-only inventory menu. Each inventory item has its own emoji, button color, stock amount, and fill multiplier.
-9. Feed and Drink effects still share the existing global food and drink cooldowns. When satiation reaches max, eating and drinking are blocked until the satiation timer ticks it back down.
-10. Play also reduces satiation by a configurable amount.
-11. Energy decreases on API use and games. When energy reaches `0`, play is blocked and stat loss is doubled until the bot rests.
-12. Rest only appears when energy is below `1`. While sleeping, the bot refuses normal chat, auto-chat, heartbeat, and revival, but reminders still fire.
-13. If the bot is left alone, passive energy recharge restores energy after a configurable inactivity period.
-14. Any interaction resets the passive recharge timer, including mentions, replies, games, inventory use, clean/medicate/rest, reminders, heartbeat, auto-chat, and revival.
-15. Hunger and thirst below the configured low-need threshold each apply extra happiness loss every turn.
-16. When the bot is sick, its happiness loss is multiplied by the configured sickness multiplier and sickness also drains HP every turn.
-17. Medicine is allowed while the bot is sick or while health is below max. It cures sickness, restores configurable HP, and costs configurable happiness.
-18. Dirt no longer appears instantly. After the configured food threshold is reached, one or more hidden poop timers are queued. Each timer picks a random whole-minute delay from `1` up to the configured max and posts a script-only poop message when it pops.
-19. Uncleaned dirt gets a grace period. If poop is not cleaned before that timer expires, the bot becomes sick.
-20. Health drops when core stats are below threshold and when sickness is active. While sick, each poop adds extra per-turn health damage on top of the normal sickness damage.
-21. If health reaches `0`, the Tamagotchi dies, soul memory is wiped, `[ce]` is broadcast, and a fresh egg starts hatching.
-22. Error messages such as cooldown, satiated, healthy/full-health medicine rejection, already clean, and no-energy are ephemeral and only shown to the user who triggered them.
-23. The visible public stat footer is stripped from stored chat context before messages are sent back to the LLM, which avoids wasting tokens and prevents hallucinated self-reported stats.
+7. Pressing Play now opens a user-only game menu with one button per game.
+8. Rock-Paper-Scissors remains available from that menu. Intermediate choices stay private to the player; the final result is public.
+9. Lucky Gift is also available from the game menu. It has its own configurable cooldown and reveal timer, shows a live countdown, and then awards a random configured prize from the Lucky Gift pool.
+10. Food and drink are consumed from the user-only inventory menu. Each inventory item has its own emoji, button color, stock amount, fill multiplier, and optional happiness value for Lucky Gift rewards.
+11. Feed and Drink effects still share the existing global food and drink cooldowns. When satiation reaches max, eating and drinking are blocked until the satiation timer ticks it back down.
+12. Rock-Paper-Scissors play still reduces satiation by a configurable amount.
+13. Energy decreases on API use and games. When energy reaches `0`, play is blocked and stat loss is doubled until the bot rests.
+14. Rest only appears when energy is below `1`. While sleeping, the bot refuses normal chat, auto-chat, heartbeat, and revival, but reminders still fire.
+15. If the bot is left alone, passive energy recharge restores energy after a configurable inactivity period.
+16. Any interaction resets the passive recharge timer, including mentions, replies, games, inventory use, clean/medicate/rest, reminders, heartbeat, auto-chat, and revival.
+17. Hunger and thirst below the configured low-need threshold each apply extra happiness loss every turn.
+18. When the bot is sick, its happiness loss is multiplied by the configured sickness multiplier and sickness also drains HP every turn.
+19. Medicine is allowed while the bot is sick or while health is below max. It cures sickness, restores configurable HP, and costs configurable happiness.
+20. Dirt no longer appears instantly. After the configured food threshold is reached, one or more hidden poop timers are queued. Each timer picks a random whole-minute delay from `1` up to the configured max and posts a script-only poop message when it pops.
+21. Uncleaned dirt gets a grace period. If poop is not cleaned before that timer expires, the bot becomes sick.
+22. Health drops when core stats are below threshold and when sickness is active. While sick, each poop adds extra per-turn health damage on top of the normal sickness damage.
+23. If health reaches `0`, the Tamagotchi dies, soul memory is wiped, `[ce]` is broadcast, and a fresh egg starts hatching.
+24. Error messages such as cooldown, satiated, healthy/full-health medicine rejection, already clean, and no-energy are ephemeral and only shown to the user who triggered them.
+25. The visible public stat footer is stripped from stored chat context before messages are sent back to the LLM, which avoids wasting tokens and prevents hallucinated self-reported stats.
 
 ---
 

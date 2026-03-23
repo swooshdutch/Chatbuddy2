@@ -140,11 +140,17 @@ def _build_tama_view():
 def _format_tama_item_summary(item: dict) -> str:
     stock = "unlimited" if item.get("is_unlimited") else f"x{item.get('amount', 0)}"
     color_name = BUTTON_STYLE_LABELS.get(item.get("button_style", "secondary"), item.get("button_style", "secondary"))
-    return (
+    parts = [
         f"{item.get('emoji', '')} **{item.get('name', item.get('id', 'item'))}** "
         f"(`{item.get('id', '')}`) - {item.get('item_type', 'food')}, "
         f"multiplier x{item.get('multiplier', 1.0)}, {stock}, {color_name} button"
-    )
+    ]
+    happiness_delta = float(item.get("happiness_delta", 0.0) or 0.0)
+    if happiness_delta:
+        parts.append(f"happiness {happiness_delta:+g}")
+    if item.get("lucky_gift_prize"):
+        parts.append("lucky-gift prize")
+    return ", ".join(parts)
 
 
 def _resolve_tama_item_id(name_or_id: str) -> str | None:
@@ -1979,17 +1985,20 @@ async def set_tama_drink(
 @bot.tree.command(name="add-tama-item", description="Add or update a Tamagotchi inventory item")
 @app_commands.describe(
     name="Display name for the inventory item",
-    item_type="Whether this item is food or drink",
+    item_type="Whether this item is food, drink, or misc",
     emoji="Emoji shown on the inventory button and public response",
     multiplier="Fill multiplier based on the configured feed/drink amount",
+    happiness_amount="Happiness granted or removed when this item is won from Lucky Gift",
     button_color="Discord button color for the inventory item",
     amount="Starting amount for limited items",
     unlimited="Set true for infinite stock",
+    lucky_gift_prize="Whether this item can be won from Lucky Gift",
 )
 @app_commands.choices(
     item_type=[
         app_commands.Choice(name="food", value="food"),
         app_commands.Choice(name="drink", value="drink"),
+        app_commands.Choice(name="misc", value="misc"),
     ],
     button_color=[
         app_commands.Choice(name="blue", value="primary"),
@@ -2005,27 +2014,31 @@ async def add_tama_item(
     item_type: app_commands.Choice[str],
     emoji: str,
     multiplier: float,
+    happiness_amount: float,
     button_color: app_commands.Choice[str],
-    amount: int = 1,
+    amount: int = 0,
     unlimited: bool = False,
+    lucky_gift_prize: bool = False,
 ):
     ensure_inventory_defaults(bot_config)
     if multiplier < 0:
         await interaction.response.send_message("⚠️ Multiplier must be ≥ 0.", ephemeral=True)
         return
-    if not unlimited and amount < 1:
-        await interaction.response.send_message("⚠️ Limited items must start with at least 1 in stock.", ephemeral=True)
+    if not unlimited and amount < 0:
+        await interaction.response.send_message("⚠️ Limited items must start with 0 or more in stock.", ephemeral=True)
         return
 
     item_id = inventory_item_id_from_name(name)
     bot_config.setdefault("tama_inventory_items", {})
     bot_config["tama_inventory_items"][item_id] = {
         "name": name.strip() or "Item",
-        "emoji": emoji.strip() or ("🍔" if item_type.value == "food" else "🥤"),
+        "emoji": emoji.strip() or ("🍔" if item_type.value == "food" else ("🥤" if item_type.value == "drink" else "🎁")),
         "item_type": item_type.value,
         "multiplier": round(multiplier, 2),
+        "happiness_delta": round(happiness_amount, 2),
         "button_style": button_color.value,
         "amount": -1 if unlimited else amount,
+        "lucky_gift_prize": lucky_gift_prize,
     }
     save_config(bot_config)
     stored_item = next((item for item in get_inventory_items(bot_config, visible_only=False) if item["id"] == item_id), None)
@@ -2096,6 +2109,28 @@ async def set_tama_play(
     await interaction.response.send_message(
         f"✅ Play: +**{happiness}** 😊, -**{hunger_loss}** 🍔, -**{thirst_loss}** 🥤, "
         f"-**{satiation_loss}** 🤰, **{cooldown}s** cd.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="set-tama-lucky-gift", description="Configure Lucky Gift cooldown and reveal timer")
+@app_commands.describe(
+    cooldown="How long Lucky Gift stays on cooldown in seconds",
+    reveal_time="How long the gift countdown lasts before revealing the prize",
+)
+@app_commands.default_permissions(administrator=True)
+async def set_tama_lucky_gift(interaction: discord.Interaction, cooldown: int, reveal_time: int):
+    if cooldown < 0:
+        await interaction.response.send_message("⚠️ Cooldown must be ≥ 0.", ephemeral=True)
+        return
+    if reveal_time < 1:
+        await interaction.response.send_message("⚠️ Reveal time must be at least 1 second.", ephemeral=True)
+        return
+    bot_config["tama_cd_lucky_gift"] = cooldown
+    bot_config["tama_lucky_gift_duration"] = reveal_time
+    save_config(bot_config)
+    await interaction.response.send_message(
+        f"✅ Lucky Gift: cooldown **{cooldown}s**, reveal timer **{reveal_time}s**.",
         ephemeral=True,
     )
 
@@ -2324,6 +2359,8 @@ async def show_tama_stats(interaction: discord.Interaction):
         f"**Play Effects:**\n"
         f"• Happiness +{c.get('tama_play_happiness', 1.0)} | Hunger -{c.get('tama_play_hunger_loss', 0.4)} | "
         f"Thirst -{c.get('tama_play_thirst_loss', 0.2)} | Satiation -{c.get('tama_play_satiation_loss', 0.5)}\n"
+        f"**Lucky Gift:**\n"
+        f"• Cooldown: {c.get('tama_cd_lucky_gift', 600)}s | Reveal timer: {c.get('tama_lucky_gift_duration', 30)}s\n"
         f"**Medicine:**\n"
         f"• Heal +{c.get('tama_medicate_health_heal', 2.0)} HP | Happiness -{c.get('tama_medicate_happiness_cost', 0.3)}\n\n"
         f"**Rest:**\n"
@@ -2331,7 +2368,8 @@ async def show_tama_stats(interaction: discord.Interaction):
         f"**Button Cooldowns:**\n"
         f"• Feed: {c.get('tama_cd_feed', 60)}s | Drink: {c.get('tama_cd_drink', 60)}s | "
         f"Play: {c.get('tama_cd_play', 60)}s | Medicate: {c.get('tama_cd_medicate', 60)}s | "
-        f"Clean: {c.get('tama_cd_clean', 60)}s | Rest: {c.get('tama_cd_rest', 60)}s\n\n"
+        f"Clean: {c.get('tama_cd_clean', 60)}s | Rest: {c.get('tama_cd_rest', 60)}s | "
+        f"Lucky Gift: {c.get('tama_cd_lucky_gift', 600)}s\n\n"
         f"**Inventory Items:**\n"
         f"{inventory_lines}"
     )
@@ -2676,7 +2714,7 @@ async def help_command(interaction: discord.Interaction):
             "`/set-tama-health` `/set-tama-satiation` `/set-tama-energy` `/set-tama-dirt` "
             "`/set-tama-sickness` `/set-tama-rest` `/set-tama-hatch-time` `/set-tama-hatch-prompt`\n"
             "**Buttons:** `/set-tama-feed` `/set-tama-drink` `/set-tama-play` "
-            "`/set-tama-medicate` `/set-tama-clean`\n"
+            "`/set-tama-lucky-gift` `/set-tama-medicate` `/set-tama-clean`\n"
             "**Inventory:** `/add-tama-item` `/show-tama-items` `/remove-tama-item`\n"
             "**Responses:** `/set-resp-food` `/set-resp-drink` `/set-resp-play` "
             "`/set-resp-medicate` `/set-resp-medicate-healthy` `/set-resp-clean` "
@@ -2696,8 +2734,8 @@ async def help_command(interaction: discord.Interaction):
             "`/dev-set-stats` - Set current stats directly for testing\n"
             "`/reset-tama-stats` - Reset the pet / start a new egg\n\n"
             "Setup, reset, and death can start a new egg hatch. While hatching, chat is blocked. "
-            "Footer mood is dynamic, the skull appears while sick, medicine heals/cures, inventory food "
-            "can queue randomized poop timers, and rest appears below 1 energy."
+            "Footer mood is dynamic, the skull appears while sick, medicine heals/cures, Lucky Gift can award "
+            "inventory items and happiness changes, inventory food can queue randomized poop timers, and rest appears below 1 energy."
         ),
         inline=False,
     )
