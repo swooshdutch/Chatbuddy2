@@ -91,6 +91,8 @@ DEFAULTS = {
     "tama_happiness": 10.0,
     "tama_happiness_max": 10,
     "tama_happiness_depletion": 0.1,
+    "tama_happiness_low_need_threshold": 5.0,
+    "tama_happiness_low_need_penalty": 0.1,
     # Health (counts down â€” death at 0)
     "tama_health": 10.0,
     "tama_health_max": 10,
@@ -116,17 +118,28 @@ DEFAULTS = {
     "tama_cd_rest": 60,
     "tama_sleeping": False,
     "tama_sleep_until": 0.0,
+    "tama_hatching": False,
+    "tama_hatch_until": 0.0,
+    "tama_hatch_channel_id": "",
+    "tama_hatch_message_id": "",
+    "tama_egg_hatch_time": 30,
+    "tama_hatch_prompt": (
+        "You have just hatched in this Discord server. Your life has begun right now. "
+        "Send your very first message to the server."
+    ),
     "tama_action_log": [],
     # Dirtiness / poop
     "tama_dirt": 0,
     "tama_dirt_max": 4,
-    "tama_dirt_food_threshold": 10,
+    "tama_dirt_food_threshold": 5,
     "tama_dirt_food_counter": 0,
     "tama_dirt_health_damage": 0.5,
     "tama_dirt_damage_interval": 600,
+    "tama_dirt_poop_timer_max_minutes": 5,
     # Sickness (boolean flag)
     "tama_sick": False,
     "tama_sick_health_damage": 0.5,
+    "tama_sick_happiness_multiplier": 2.0,
     # Button actions - fill / effect amounts
     "tama_feed_amount": 1.0,
     "tama_feed_energy_every": 3,
@@ -140,6 +153,8 @@ DEFAULTS = {
     "tama_play_hunger_loss": 0.4,
     "tama_play_thirst_loss": 0.2,
     "tama_play_satiation_loss": 0.5,
+    "tama_medicate_health_heal": 2.0,
+    "tama_medicate_happiness_cost": 0.3,
     # Button cooldowns (seconds, global)
     "tama_cd_feed": 60,
     "tama_cd_drink": 60,
@@ -154,6 +169,7 @@ DEFAULTS = {
     "tama_resp_medicate_healthy": "I'm not sick! No medicine needed.",
     "tama_resp_clean": "🚿 Squeaky clean!",
     "tama_resp_clean_none": "Already clean! No mess to tidy.",
+    "tama_resp_poop": "oops i pooped",
     "tama_resp_full": "🤰 I'm stuffed! Wait a bit...",
     "tama_resp_cooldown": "⏳ Hold on! You can use this again in {time}.",
     "tama_resp_rest": "💤 Tucking in for a recharge. See you soon!",
@@ -163,6 +179,7 @@ DEFAULTS = {
     # Command access
     "bot_owner_id": "",
     "command_allowed_user_ids": [],
+    "main_chat_channel_id": "",
 }
 
 

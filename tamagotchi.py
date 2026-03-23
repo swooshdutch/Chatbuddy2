@@ -11,6 +11,7 @@ All stat changes are managed here so the LLM cannot cheat.
 import asyncio
 import random
 import time
+import io
 import discord
 from discord import ui
 from config import save_config
@@ -86,8 +87,69 @@ def build_sleeping_message(config: dict) -> str:
     return template.replace("{time}", _discord_relative_time(sleeping_remaining(config)))
 
 
+def is_hatching(config: dict) -> bool:
+    hatch_until = float(config.get("tama_hatch_until", 0.0) or 0.0)
+    return bool(config.get("tama_hatching", False)) and hatch_until > time.time()
+
+
+def hatching_remaining(config: dict) -> float:
+    return max(0.0, float(config.get("tama_hatch_until", 0.0) or 0.0) - time.time())
+
+
+def build_hatching_message(config: dict) -> str:
+    remaining = max(1, int(hatching_remaining(config) + 0.999))
+    return f"🥚 I'm about to hatch... life begins in **{remaining}s**. Please wait for me to hatch first."
+
+
 def can_use_energy(config: dict) -> bool:
     return float(config.get("tama_energy", 0.0) or 0.0) > 0.0
+
+
+def _stat_ratio(current: float, maximum: float) -> float:
+    if maximum <= 0:
+        return 0.0
+    return max(0.0, min(1.0, float(current) / float(maximum)))
+
+
+def happiness_emoji(config: dict) -> str:
+    percent = _stat_ratio(
+        float(config.get("tama_happiness", 0)),
+        float(config.get("tama_happiness_max", 10)),
+    ) * 100
+    if percent >= 80:
+        return "😁"
+    if percent >= 60:
+        return "😀"
+    if percent >= 40:
+        return "🙂"
+    if percent >= 20:
+        return "😕"
+    return "😠"
+
+
+def wipe_soul_file() -> None:
+    try:
+        with open("soul.md", "w", encoding="utf-8") as f:
+            f.write("{}")
+        print("[Tamagotchi] soul.md wiped.")
+    except Exception as e:
+        print(f"[Tamagotchi] Failed to wipe soul.md: {e}")
+
+
+def reset_tamagotchi_state(config: dict) -> None:
+    config["tama_hunger"] = float(config.get("tama_hunger_max", 10))
+    config["tama_thirst"] = float(config.get("tama_thirst_max", 10))
+    config["tama_happiness"] = float(config.get("tama_happiness_max", 10))
+    config["tama_health"] = float(config.get("tama_health_max", 10))
+    config["tama_energy"] = float(config.get("tama_energy_max", 10))
+    config["tama_satiation"] = 0.0
+    config["tama_dirt"] = 0
+    config["tama_dirt_food_counter"] = 0
+    config["tama_feed_energy_counter"] = 0
+    config["tama_drink_energy_counter"] = 0
+    config["tama_sick"] = False
+    config["tama_sleeping"] = False
+    config["tama_sleep_until"] = 0.0
 
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -115,6 +177,9 @@ class TamagotchiManager:
         self._energy_expiry: float = 0.0
         self._sleep_task: asyncio.Task | None = None
         self._sleep_expiry: float = 0.0
+        self._hatch_task: asyncio.Task | None = None
+        self._hatch_expiry: float = 0.0
+        self._poop_tasks: set[asyncio.Task] = set()
         self._rps_games: dict[int, str] = {}        # msg_id -> bot_choice
 
     # â”€â”€ lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -123,6 +188,7 @@ class TamagotchiManager:
         """Start background tasks if tama is enabled."""
         if self.config.get("tama_enabled", False):
             self._resume_sleep_state()
+            self._resume_hatching_state()
             if self.config.get("tama_satiation", 0) >= self.config.get("tama_satiation_max", 10):
                 self.start_satiation_timer()
             self._start_dirt_task()
@@ -137,6 +203,11 @@ class TamagotchiManager:
             self._energy_task.cancel()
         if self._sleep_task and not self._sleep_task.done():
             self._sleep_task.cancel()
+        if self._hatch_task and not self._hatch_task.done():
+            self._hatch_task.cancel()
+        for task in list(self._poop_tasks):
+            task.cancel()
+        self._poop_tasks.clear()
 
     # â”€â”€ cooldowns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -193,6 +264,14 @@ class TamagotchiManager:
     def sleep_remaining(self) -> float:
         return max(0.0, self._sleep_expiry - time.time())
 
+    @property
+    def hatching(self) -> bool:
+        return self._hatch_expiry > time.time()
+
+    @property
+    def hatch_remaining(self) -> float:
+        return max(0.0, self._hatch_expiry - time.time())
+
     def _resume_sleep_state(self):
         expiry = float(self.config.get("tama_sleep_until", 0.0) or 0.0)
         self._sleep_expiry = expiry
@@ -227,6 +306,216 @@ class TamagotchiManager:
         except asyncio.CancelledError:
             return
         self.finish_rest()
+
+    def _resume_hatching_state(self):
+        expiry = float(self.config.get("tama_hatch_until", 0.0) or 0.0)
+        self._hatch_expiry = expiry
+        if not self.config.get("tama_hatching", False):
+            return
+        if self._hatch_task and not self._hatch_task.done():
+            self._hatch_task.cancel()
+        self._hatch_task = asyncio.create_task(self._hatch_loop())
+
+    def _resolve_main_channel_id(self, preferred_channel_id: int | str | None = None) -> str:
+        if preferred_channel_id:
+            return str(preferred_channel_id)
+        for key in ("main_chat_channel_id", "tama_hatch_channel_id", "reminders_channel_id"):
+            value = str(self.config.get(key, "") or "").strip()
+            if value:
+                return value
+        for ch_id, enabled in self.config.get("allowed_channels", {}).items():
+            if enabled:
+                return str(ch_id)
+        return ""
+
+    async def _resolve_channel(self, channel_id: int | str | None):
+        if not channel_id:
+            return None
+        try:
+            numeric = int(channel_id)
+        except (TypeError, ValueError):
+            return None
+        channel = self.bot.get_channel(numeric)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(numeric)
+            except Exception:
+                channel = None
+        return channel
+
+    async def _send_ce_to_primary_channels(self):
+        channel_ids: set[int] = set()
+        main_channel_id = self._resolve_main_channel_id()
+        if main_channel_id:
+            channel_ids.add(int(main_channel_id))
+        soc_id = str(self.config.get("soc_channel_id", "") or "").strip()
+        if soc_id:
+            channel_ids.add(int(soc_id))
+        for channel_id in channel_ids:
+            channel = await self._resolve_channel(channel_id)
+            if channel is None:
+                continue
+            try:
+                await channel.send("[ce]")
+            except Exception as e:
+                print(f"[Tamagotchi] Failed to send primary [ce] to channel {channel_id}: {e}")
+
+    def _clear_hatch_state(self):
+        self._hatch_expiry = 0.0
+        self.config["tama_hatching"] = False
+        self.config["tama_hatch_until"] = 0.0
+        self.config["tama_hatch_message_id"] = ""
+
+    async def start_egg_cycle(
+        self,
+        channel_id: int | str | None = None,
+        *,
+        wipe_soul: bool,
+        reset_stats: bool,
+        send_ce: bool,
+    ):
+        if self._hatch_task and not self._hatch_task.done():
+            self._hatch_task.cancel()
+        self.clear_poop_timers()
+        self.clear_satiation_timer()
+        if self._sleep_task and not self._sleep_task.done():
+            self._sleep_task.cancel()
+        self._sleep_expiry = 0.0
+
+        if wipe_soul:
+            wipe_soul_file()
+        if reset_stats:
+            reset_tamagotchi_state(self.config)
+
+        hatch_channel_id = self._resolve_main_channel_id(channel_id)
+        duration = max(1, int(self.config.get("tama_egg_hatch_time", 30)))
+        self._hatch_expiry = time.time() + duration
+        self.config["tama_hatching"] = True
+        self.config["tama_hatch_until"] = self._hatch_expiry
+        self.config["tama_hatch_channel_id"] = hatch_channel_id
+        self.config["tama_hatch_message_id"] = ""
+        save_config(self.config)
+
+        if send_ce:
+            await self._send_ce_to_primary_channels()
+
+        channel = await self._resolve_channel(hatch_channel_id)
+        if channel is not None:
+            try:
+                msg = await channel.send(build_hatching_message(self.config))
+                self.config["tama_hatch_message_id"] = str(msg.id)
+                save_config(self.config)
+            except Exception as e:
+                print(f"[Tamagotchi] Failed to post hatch message in channel {hatch_channel_id}: {e}")
+
+        if self._hatch_task and not self._hatch_task.done():
+            self._hatch_task.cancel()
+        self._hatch_task = asyncio.create_task(self._hatch_loop())
+
+    async def _update_hatch_message(self, channel) -> None:
+        message_id = str(self.config.get("tama_hatch_message_id", "") or "").strip()
+        content = build_hatching_message(self.config)
+        if channel is None:
+            return
+        if not message_id:
+            try:
+                msg = await channel.send(content)
+                self.config["tama_hatch_message_id"] = str(msg.id)
+                save_config(self.config)
+            except Exception as e:
+                print(f"[Tamagotchi] Failed to create hatch message: {e}")
+            return
+        try:
+            message = await channel.fetch_message(int(message_id))
+            if message.content != content:
+                await message.edit(content=content)
+        except Exception:
+            try:
+                msg = await channel.send(content)
+                self.config["tama_hatch_message_id"] = str(msg.id)
+                save_config(self.config)
+            except Exception as e:
+                print(f"[Tamagotchi] Failed to refresh hatch message: {e}")
+
+    async def _complete_hatching(self):
+        channel_id = self._resolve_main_channel_id(self.config.get("tama_hatch_channel_id"))
+        channel = await self._resolve_channel(channel_id)
+        message_id = str(self.config.get("tama_hatch_message_id", "") or "").strip()
+        self._clear_hatch_state()
+        save_config(self.config)
+
+        if channel is not None and message_id:
+            try:
+                message = await channel.fetch_message(int(message_id))
+                await message.edit(content="🐣 The egg has hatched!")
+            except Exception:
+                pass
+
+        if channel is None:
+            return
+
+        from gemini_api import generate
+        from utils import chunk_message, resolve_custom_emoji, extract_thoughts
+
+        prompt = self.config.get(
+            "tama_hatch_prompt",
+            "You have just hatched in this Discord server. Your life has begun right now. Send your very first message to the server.",
+        )
+        response_text, audio_bytes, soul_logs, _ = await generate(
+            prompt=prompt,
+            context="",
+            config=self.config,
+            speaker_name="System",
+            speaker_id="system",
+        )
+        clean_text, thoughts_text = extract_thoughts(response_text)
+        response_text = clean_text
+
+        soc_channel_id = str(self.config.get("soc_channel_id", "") or "").strip()
+        if thoughts_text and self.config.get("soc_enabled", False) and soc_channel_id:
+            thought_channel = await self._resolve_channel(soc_channel_id)
+            if thought_channel is not None:
+                for chunk in chunk_message(thoughts_text):
+                    await thought_channel.send(chunk)
+
+        response_text = resolve_custom_emoji(response_text, getattr(channel, "guild", None))
+        if self.config.get("tama_enabled", False):
+            response_text = append_tamagotchi_footer(response_text, self.config, self)
+            hatch_view = TamagotchiView(self.config, self)
+        else:
+            hatch_view = None
+        chunks = chunk_message(response_text) if response_text else []
+
+        if audio_bytes:
+            audio_file = discord.File(fp=io.BytesIO(audio_bytes), filename="hatch.wav")
+            await channel.send(file=audio_file)
+
+        for i, chunk in enumerate(chunks):
+            view = hatch_view if i == len(chunks) - 1 else None
+            await channel.send(chunk, view=view)
+
+        if soul_logs and self.config.get("soul_channel_enabled"):
+            soul_channel_id = str(self.config.get("soul_channel_id", "") or "").strip()
+            soul_channel = await self._resolve_channel(soul_channel_id)
+            if soul_channel is not None:
+                joined_logs = "\n".join(soul_logs)
+                for log_chunk in chunk_message(joined_logs, limit=1900):
+                    await soul_channel.send(f"**🧠 Soul Updates:**\n{log_chunk}")
+
+    async def _hatch_loop(self):
+        channel_id = self._resolve_main_channel_id(self.config.get("tama_hatch_channel_id"))
+        channel = await self._resolve_channel(channel_id)
+        try:
+            while self.config.get("tama_hatching", False):
+                if self.hatching:
+                    await self._update_hatch_message(channel)
+                    await asyncio.sleep(1)
+                    continue
+                break
+        except asyncio.CancelledError:
+            return
+        if self.config.get("tama_hatching", False):
+            await self._complete_hatching()
 
     # â”€â”€ satiation timer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -305,6 +594,47 @@ class TamagotchiManager:
         except asyncio.CancelledError:
             return
 
+    def queue_poop_timer(self, channel_id: int | str | None):
+        max_minutes = max(1, int(self.config.get("tama_dirt_poop_timer_max_minutes", 5)))
+        delay_seconds = random.randint(1, max_minutes) * 60
+        task = asyncio.create_task(self._poop_countdown(channel_id, delay_seconds))
+        self._poop_tasks.add(task)
+        task.add_done_callback(self._poop_tasks.discard)
+
+    def clear_poop_timers(self):
+        for task in list(self._poop_tasks):
+            task.cancel()
+        self._poop_tasks.clear()
+
+    async def _poop_countdown(self, channel_id: int | str | None, delay_seconds: int):
+        try:
+            await asyncio.sleep(delay_seconds)
+        except asyncio.CancelledError:
+            return
+
+        if not self.config.get("tama_enabled", False):
+            return
+
+        max_dirt = int(self.config.get("tama_dirt_max", 4))
+        self.config["tama_dirt"] = min(max_dirt, int(self.config.get("tama_dirt", 0)) + 1)
+        save_config(self.config)
+
+        if not channel_id:
+            return
+
+        channel = self.bot.get_channel(int(channel_id))
+        if channel is None:
+            return
+
+        msg = self.config.get("tama_resp_poop", "oops i pooped")
+        try:
+            await channel.send(
+                append_tamagotchi_footer(msg, self.config, self),
+                view=TamagotchiView(self.config, self),
+            )
+        except Exception as e:
+            print(f"[Tamagotchi] Failed to send poop message to channel {channel_id}: {e}")
+
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Stat Logic
@@ -323,7 +653,7 @@ def deplete_stats(config: dict) -> str | None:
 
     multiplier = 2.0 if float(config.get("tama_energy", 0.0) or 0.0) <= 0.0 else 1.0
 
-    # Deplete hunger / thirst / happiness
+    # Deplete hunger / thirst
     config["tama_hunger"] = max(
         0.0,
         round(
@@ -338,12 +668,23 @@ def deplete_stats(config: dict) -> str | None:
             2,
         ),
     )
+
+    low_need_threshold = float(config.get("tama_happiness_low_need_threshold", 5.0))
+    low_need_penalty = max(0.0, float(config.get("tama_happiness_low_need_penalty", 0.1)))
+    low_need_count = 0
+    for stat_key in ("tama_hunger", "tama_thirst"):
+        if float(config.get(stat_key, 0) or 0) < low_need_threshold:
+            low_need_count += 1
+
+    happiness_loss = (
+        float(config.get("tama_happiness_depletion", 0.1)) + (low_need_count * low_need_penalty)
+    ) * multiplier
+    if config.get("tama_sick", False):
+        happiness_loss *= max(1.0, float(config.get("tama_sick_happiness_multiplier", 2.0)))
+
     config["tama_happiness"] = max(
         0.0,
-        round(
-            config.get("tama_happiness", 0) - (config.get("tama_happiness_depletion", 0.1) * multiplier),
-            2,
-        ),
+        round(float(config.get("tama_happiness", 0)) - happiness_loss, 2),
     )
 
     # Deplete energy (API call)
@@ -414,26 +755,8 @@ def trigger_death(config: dict) -> str:
     Wipe soul.md, reset ALL stats to max, clear sickness.
     Returns the death message string.
     """
-    try:
-        with open("soul.md", "w", encoding="utf-8") as f:
-            f.write("{}")
-        print("[Tamagotchi] DEATH â€” soul.md wiped.")
-    except Exception as e:
-        print(f"[Tamagotchi] DEATH â€” Failed to wipe soul.md: {e}")
-
-    config["tama_hunger"] = float(config.get("tama_hunger_max", 10))
-    config["tama_thirst"] = float(config.get("tama_thirst_max", 10))
-    config["tama_happiness"] = float(config.get("tama_happiness_max", 10))
-    config["tama_health"] = float(config.get("tama_health_max", 10))
-    config["tama_energy"] = float(config.get("tama_energy_max", 10))
-    config["tama_satiation"] = 0.0
-    config["tama_dirt"] = 0
-    config["tama_dirt_food_counter"] = 0
-    config["tama_feed_energy_counter"] = 0
-    config["tama_drink_energy_counter"] = 0
-    config["tama_sick"] = False
-    config["tama_sleeping"] = False
-    config["tama_sleep_until"] = 0.0
+    wipe_soul_file()
+    reset_tamagotchi_state(config)
     save_config(config)
 
     custom = config.get("tama_rip_message", "").strip()
@@ -448,6 +771,10 @@ def trigger_death(config: dict) -> str:
 
 async def broadcast_death(bot, config: dict) -> None:
     """Send [ce] to every allowed channel + SoC channel."""
+    tama_manager = getattr(bot, "tama_manager", None)
+    if tama_manager:
+        tama_manager.clear_poop_timers()
+
     channel_ids: set[int] = set()
     for ch_id_str, enabled in config.get("allowed_channels", {}).items():
         if enabled:
@@ -469,6 +796,12 @@ async def broadcast_death(bot, config: dict) -> None:
                 await ch.send("[ce]")
             except Exception as e:
                 print(f"[Tamagotchi] Failed to send [ce] to channel {ch_id}: {e}")
+    if tama_manager and config.get("tama_enabled", False):
+        await tama_manager.start_egg_cycle(
+            wipe_soul=False,
+            reset_stats=False,
+            send_ce=False,
+        )
 
 
 async def _broadcast_death_and_message(bot, config: dict, death_msg: str):
@@ -476,6 +809,7 @@ async def _broadcast_death_and_message(bot, config: dict, death_msg: str):
     tama_view = None
     tama_manager = getattr(bot, "tama_manager", None)
     if config.get("tama_enabled", False) and tama_manager:
+        tama_manager.clear_poop_timers()
         tama_view = TamagotchiView(config, tama_manager)
     for ch_id_str, enabled in config.get("allowed_channels", {}).items():
         if enabled:
@@ -547,7 +881,7 @@ def build_tamagotchi_message_footer(config: dict, manager: TamagotchiManager | N
     parts = [
         f"🍔 {_fs(config.get('tama_hunger', 0))}/{config.get('tama_hunger_max', 10)}",
         f"🥤 {_fs(config.get('tama_thirst', 0))}/{config.get('tama_thirst_max', 10)}",
-        f"😊 {_fs(config.get('tama_happiness', 0))}/{config.get('tama_happiness_max', 10)}",
+        f"{happiness_emoji(config)} {_fs(config.get('tama_happiness', 0))}/{config.get('tama_happiness_max', 10)}",
         f"❤️ {_fs(config.get('tama_health', 0))}/{config.get('tama_health_max', 10)}",
         sat_text,
         f"⚡ {_fs(config.get('tama_energy', 0))}/{config.get('tama_energy_max', 10)}",
@@ -617,7 +951,7 @@ class TamagotchiView(ui.View):
         stat_items = [
             (f"🍔 {_fs(hunger)}/{max_hunger}", 0),
             (f"🥤 {_fs(thirst)}/{max_thirst}", 0),
-            (f"😊 {_fs(happiness)}/{max_happy}", 0),
+            (f"{happiness_emoji(self.config)} {_fs(happiness)}/{max_happy}", 0),
             (f"❤️ {_fs(health)}/{max_health}", 0),
             (sat_label, 0),
             # Row 1
@@ -631,7 +965,7 @@ class TamagotchiView(ui.View):
         if sleeping:
             stat_items.append((f"💤 {_fmt_countdown(self.manager.sleep_remaining)}", 1))
 
-        for label, row in []:
+        for label, row in stat_items:
             btn = ui.Button(
                 label=label,
                 style=discord.ButtonStyle.secondary,
@@ -724,11 +1058,10 @@ class FeedButton(ui.Button):
 
         # Poop counter
         self.config["tama_dirt_food_counter"] = self.config.get("tama_dirt_food_counter", 0) + 1
-        poop_threshold = self.config.get("tama_dirt_food_threshold", 10)
-        if self.config["tama_dirt_food_counter"] >= poop_threshold:
-            max_dirt = self.config.get("tama_dirt_max", 4)
-            self.config["tama_dirt"] = min(max_dirt, self.config.get("tama_dirt", 0) + 1)
-            self.config["tama_dirt_food_counter"] = 0
+        poop_threshold = max(1, int(self.config.get("tama_dirt_food_threshold", 5)))
+        while self.config["tama_dirt_food_counter"] >= poop_threshold:
+            self.config["tama_dirt_food_counter"] -= poop_threshold
+            self.manager.queue_poop_timer(interaction.channel_id)
 
         self.manager.sync_satiation_timer()
 
@@ -916,12 +1249,22 @@ class MedicateButton(ui.Button):
             await interaction.response.send_message(msg, ephemeral=True)
             return
 
-        if not self.config.get("tama_sick", False):
+        max_health = float(self.config.get("tama_health_max", 10))
+        current_health = float(self.config.get("tama_health", 0))
+        is_sick = self.config.get("tama_sick", False)
+        if not is_sick and current_health >= max_health:
             msg = self.config.get("tama_resp_medicate_healthy", "I'm not sick!")
             await interaction.response.send_message(msg, ephemeral=True)
             return
 
+        heal_amount = max(0.0, float(self.config.get("tama_medicate_health_heal", 2.0)))
+        happiness_cost = max(0.0, float(self.config.get("tama_medicate_happiness_cost", 0.3)))
         self.config["tama_sick"] = False
+        self.config["tama_health"] = min(max_health, round(current_health + heal_amount, 2))
+        self.config["tama_happiness"] = max(
+            0.0,
+            round(float(self.config.get("tama_happiness", 0)) - happiness_cost, 2),
+        )
         save_config(self.config)
         self.manager.set_cooldown("medicate", self.config.get("tama_cd_medicate", 60))
         msg = self.config.get("tama_resp_medicate", "💊 Feeling better!")

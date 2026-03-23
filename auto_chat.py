@@ -12,7 +12,7 @@ from discord.ext import tasks
 from config import save_config
 from gemini_api import generate, build_system_prompt
 from utils import format_context, chunk_message, resolve_custom_emoji, extract_thoughts, extract_reminder_commands, collect_context_entries
-from tamagotchi import TamagotchiView, append_tamagotchi_footer, is_sleeping
+from tamagotchi import TamagotchiView, append_tamagotchi_footer, is_sleeping, is_hatching
 
 
 class AutoChatManager:
@@ -82,7 +82,7 @@ class AutoChatManager:
             return
         if self._idle:
             return
-        if self.config.get("tama_enabled", False) and is_sleeping(self.config):
+        if self.config.get("tama_enabled", False) and (is_sleeping(self.config) or is_hatching(self.config)):
             return
 
         channel_id = self.config.get("auto_chat_channel_id")

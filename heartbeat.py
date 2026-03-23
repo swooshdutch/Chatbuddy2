@@ -21,7 +21,7 @@ from utils import (
     extract_reminder_commands,
     collect_context_entries,
 )
-from tamagotchi import TamagotchiView, append_tamagotchi_footer, is_sleeping
+from tamagotchi import TamagotchiView, append_tamagotchi_footer, is_sleeping, is_hatching
 
 
 class HeartbeatManager:
@@ -38,8 +38,6 @@ class HeartbeatManager:
         """Start (or restart) the heartbeat loop."""
         self.stop()
         if not self.config.get("heartbeat_enabled"):
-            return
-        if self.config.get("tama_enabled", False) and is_sleeping(self.config):
             return
 
         interval = max(1, self.config.get("heartbeat_interval_minutes", 60))
@@ -65,6 +63,8 @@ class HeartbeatManager:
 
     async def _tick(self):
         if not self.config.get("heartbeat_enabled"):
+            return
+        if self.config.get("tama_enabled", False) and (is_sleeping(self.config) or is_hatching(self.config)):
             return
 
         channel_id = self.config.get("heartbeat_channel_id")

@@ -13,7 +13,7 @@ from discord.ext import tasks
 from config import save_config
 from gemini_api import generate
 from utils import format_context, chunk_message, resolve_custom_emoji, extract_thoughts, extract_reminder_commands, collect_context_entries
-from tamagotchi import TamagotchiView, append_tamagotchi_footer, is_sleeping
+from tamagotchi import TamagotchiView, append_tamagotchi_footer, is_sleeping, is_hatching
 
 
 class RevivalManager:
@@ -64,7 +64,7 @@ class RevivalManager:
         # If revival is disabled, do nothing
         if not revival.get("enabled", True):
             return
-        if self.config.get("tama_enabled", False) and is_sleeping(self.config):
+        if self.config.get("tama_enabled", False) and (is_sleeping(self.config) or is_hatching(self.config)):
             return
 
         channel_id = int(revival["channel_id"])
@@ -235,7 +235,7 @@ class RevivalManager:
             revival = self.config.get("chat_revival")
             if not revival or not revival.get("enabled", True):
                 break
-            if self.config.get("tama_enabled", False) and is_sleeping(self.config):
+            if self.config.get("tama_enabled", False) and (is_sleeping(self.config) or is_hatching(self.config)):
                 continue
 
             # Calculate remaining time for the footer (e.g. "4m 26s")
