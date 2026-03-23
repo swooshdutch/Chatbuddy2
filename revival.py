@@ -13,7 +13,7 @@ from discord.ext import tasks
 from config import save_config
 from gemini_api import generate
 from utils import format_context, chunk_message, resolve_custom_emoji, extract_thoughts, extract_reminder_commands
-from tamagotchi import TamagotchiView, is_sleeping
+from tamagotchi import TamagotchiView, append_tamagotchi_footer, is_sleeping
 
 
 class RevivalManager:
@@ -180,6 +180,7 @@ class RevivalManager:
             tama_manager = getattr(self.bot, "tama_manager", None)
             if self.config.get("tama_enabled", False) and tama_manager:
                 tama_view = TamagotchiView(self.config, tama_manager)
+                response_text = append_tamagotchi_footer(response_text, self.config, tama_manager)
             for i, chunk in enumerate(chunks):
                 await channel.send(chunk, view=tama_view if i == len(chunks) - 1 else None)
 
@@ -339,6 +340,7 @@ class RevivalManager:
                     tama_manager = getattr(self.bot, "tama_manager", None)
                     if self.config.get("tama_enabled", False) and tama_manager:
                         tama_view = TamagotchiView(self.config, tama_manager)
+                        response_text = append_tamagotchi_footer(response_text, self.config, tama_manager)
                     for i, chunk in enumerate(chunks):
                         await channel.send(chunk, view=tama_view if i == len(chunks) - 1 else None)
 

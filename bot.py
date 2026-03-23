@@ -25,7 +25,7 @@ from heartbeat import HeartbeatManager
 from tamagotchi import (
     deplete_stats, broadcast_death,
     TamagotchiManager, TamagotchiView,
-    build_sleeping_message, is_sleeping,
+    append_tamagotchi_footer, build_sleeping_message, is_sleeping,
 )
 
 # ---------------------------------------------------------------------------
@@ -309,7 +309,7 @@ async def _generate_and_respond(message: discord.Message):
     """Handle a single mention/reply — the normal response flow."""
     if bot_config.get("tama_enabled", False) and is_sleeping(bot_config):
         await message.reply(
-            build_sleeping_message(bot_config),
+            append_tamagotchi_footer(build_sleeping_message(bot_config), bot_config, tama_manager),
             mention_author=False,
             view=_build_tama_view(),
         )
@@ -409,6 +409,8 @@ async def _generate_and_respond(message: discord.Message):
 
         # Tamagotchi: build button view if enabled
         tama_view = _build_tama_view()
+        if tama_view:
+            response_text = append_tamagotchi_footer(response_text, bot_config, tama_manager)
 
         if audio_bytes:
             audio_file = discord.File(fp=io.BytesIO(audio_bytes), filename="chatbuddy_voice.wav")
@@ -448,7 +450,10 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
     Formats them as a single chatlog input and generates one response.
     """
     if bot_config.get("tama_enabled", False) and is_sleeping(bot_config):
-        await channel.send(build_sleeping_message(bot_config), view=_build_tama_view())
+        await channel.send(
+            append_tamagotchi_footer(build_sleeping_message(bot_config), bot_config, tama_manager),
+            view=_build_tama_view(),
+        )
         return
 
     async with channel.typing():
@@ -553,6 +558,8 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
 
         # Tamagotchi: build button view if enabled
         tama_view = _build_tama_view()
+        if tama_view:
+            response_text = append_tamagotchi_footer(response_text, bot_config, tama_manager)
 
         if audio_bytes:
             audio_file = discord.File(fp=io.BytesIO(audio_bytes), filename="chatbuddy_voice.wav")

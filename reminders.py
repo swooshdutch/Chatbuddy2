@@ -29,7 +29,7 @@ from utils import (
     extract_thoughts,
     extract_reminder_commands,
 )
-from tamagotchi import TamagotchiView
+from tamagotchi import TamagotchiView, append_tamagotchi_footer
 
 REMINDERS_FILE = "reminders.json"
 
@@ -398,6 +398,7 @@ class ReminderManager:
                 tama_manager = getattr(self.bot, "tama_manager", None)
                 if self.config.get("tama_enabled", False) and tama_manager:
                     tama_view = TamagotchiView(self.config, tama_manager)
+                    response_text = append_tamagotchi_footer(response_text, self.config, tama_manager)
                 footer = f"\n-# {kind_label}: *{entry_name}*"
                 chunks = chunk_message(response_text)
                 chunks[-1] += footer

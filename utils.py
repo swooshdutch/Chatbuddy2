@@ -10,6 +10,8 @@ from typing import List, Dict, Tuple
 
 import discord
 
+_TAMAGOTCHI_FOOTER_RE = re.compile(r"\n?> -# \*\*.*?\*\*(?:\n|$)", re.DOTALL)
+
 
 def strip_mention(text: str, bot_id: int) -> str:
     """Remove the bot's mention tag(s) from the message text."""
@@ -47,6 +49,11 @@ def chunk_message(text: str, limit: int = 2000) -> List[str]:
     return chunks
 
 
+def strip_tamagotchi_footer(text: str) -> str:
+    """Remove the compact visible tamagotchi footer from message text."""
+    return _TAMAGOTCHI_FOOTER_RE.sub("\n", text).strip()
+
+
 def format_context(messages: List[discord.Message], ce_enabled: bool = True) -> str:
     """
     Format a list of Discord messages into a rich context string.
@@ -76,7 +83,7 @@ def format_context(messages: List[discord.Message], ce_enabled: bool = True) -> 
         timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
         display_name = msg.author.display_name
         user_id = msg.author.id
-        content = msg.content  # raw content — preserves Discord tokens
+        content = strip_tamagotchi_footer(msg.content)  # raw content minus visible stat footer
         lines.append(f"[{timestamp}] {display_name} (ID:{user_id}): {content}")
     return "\n".join(lines)
 

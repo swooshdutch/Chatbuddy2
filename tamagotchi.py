@@ -400,7 +400,7 @@ async def _broadcast_death_and_message(bot, config: dict, death_msg: str):
             try:
                 ch = bot.get_channel(int(ch_id_str))
                 if ch:
-                    await ch.send(death_msg, view=tama_view)
+                    await ch.send(append_tamagotchi_footer(death_msg, config, tama_manager), view=tama_view)
             except Exception:
                 pass
     await broadcast_death(bot, config)
@@ -451,6 +451,42 @@ def build_tamagotchi_system_prompt(config: dict) -> str:
         "If your health reaches 0, you die — your soul is wiped and stats reset.]",
     ]
     return "\n".join(lines)
+
+
+def build_tamagotchi_message_footer(config: dict, manager: TamagotchiManager | None = None) -> str:
+    """Compact mobile-friendly footer appended to public messages."""
+    if not config.get("tama_enabled", False):
+        return ""
+
+    sat_text = f"🤰 {_fs(config.get('tama_satiation', 0))}/{config.get('tama_satiation_max', 10)}"
+    if manager and manager.satiation_active:
+        sat_text = f"🤰 {_fmt_countdown(manager.satiation_remaining)}"
+
+    parts = [
+        f"🍔 {_fs(config.get('tama_hunger', 0))}/{config.get('tama_hunger_max', 10)}",
+        f"🥤 {_fs(config.get('tama_thirst', 0))}/{config.get('tama_thirst_max', 10)}",
+        f"😊 {_fs(config.get('tama_happiness', 0))}/{config.get('tama_happiness_max', 10)}",
+        f"❤️ {_fs(config.get('tama_health', 0))}/{config.get('tama_health_max', 10)}",
+        sat_text,
+        f"⚡ {_fs(config.get('tama_energy', 0))}/{config.get('tama_energy_max', 10)}",
+        f"💩 {config.get('tama_dirt', 0)}/{config.get('tama_dirt_max', 4)}",
+    ]
+
+    if config.get("tama_sick", False):
+        parts.append("💀 Sick")
+    if manager and manager.sleeping:
+        parts.append(f"💤 {_fmt_countdown(manager.sleep_remaining)}")
+
+    return "\n> -# **" + " | ".join(parts) + "**"
+
+
+def append_tamagotchi_footer(text: str, config: dict, manager: TamagotchiManager | None = None) -> str:
+    footer = build_tamagotchi_message_footer(config, manager)
+    if not footer:
+        return text
+    if not text:
+        return footer.lstrip("\n")
+    return text.rstrip() + footer
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -513,7 +549,7 @@ class TamagotchiView(ui.View):
         if sleeping:
             stat_items.append((f"💤 {_fmt_countdown(self.manager.sleep_remaining)}", 1))
 
-        for label, row in stat_items:
+        for label, row in []:
             btn = ui.Button(
                 label=label,
                 style=discord.ButtonStyle.secondary,
@@ -606,7 +642,10 @@ class FeedButton(ui.Button):
         save_config(self.config)
         self.manager.set_cooldown("feed", self.config.get("tama_cd_feed", 60))
         msg = self.config.get("tama_resp_feed", "*nom nom* 🍔 Thanks for the food!")
-        await interaction.response.send_message(msg, view=TamagotchiView(self.config, self.manager))
+        await interaction.response.send_message(
+            append_tamagotchi_footer(msg, self.config, self.manager),
+            view=TamagotchiView(self.config, self.manager),
+        )
 
 
 class DrinkButton(ui.Button):
@@ -658,7 +697,10 @@ class DrinkButton(ui.Button):
         save_config(self.config)
         self.manager.set_cooldown("drink", self.config.get("tama_cd_drink", 60))
         msg = self.config.get("tama_resp_drink", "*gulp gulp* 🥤 That hit the spot!")
-        await interaction.response.send_message(msg, view=TamagotchiView(self.config, self.manager))
+        await interaction.response.send_message(
+            append_tamagotchi_footer(msg, self.config, self.manager),
+            view=TamagotchiView(self.config, self.manager),
+        )
 
 
 class PlayButton(ui.Button):
@@ -760,7 +802,10 @@ class MedicateButton(ui.Button):
         save_config(self.config)
         self.manager.set_cooldown("medicate", self.config.get("tama_cd_medicate", 60))
         msg = self.config.get("tama_resp_medicate", "💊 Feeling better!")
-        await interaction.response.send_message(msg, view=TamagotchiView(self.config, self.manager))
+        await interaction.response.send_message(
+            append_tamagotchi_footer(msg, self.config, self.manager),
+            view=TamagotchiView(self.config, self.manager),
+        )
 
 
 class CleanButton(ui.Button):
@@ -796,7 +841,10 @@ class CleanButton(ui.Button):
         save_config(self.config)
         self.manager.set_cooldown("clean", self.config.get("tama_cd_clean", 60))
         msg = self.config.get("tama_resp_clean", "🚿 Squeaky clean!")
-        await interaction.response.send_message(msg, view=TamagotchiView(self.config, self.manager))
+        await interaction.response.send_message(
+            append_tamagotchi_footer(msg, self.config, self.manager),
+            view=TamagotchiView(self.config, self.manager),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -834,7 +882,10 @@ class RestButton(ui.Button):
         self.manager.set_cooldown("rest", self.config.get("tama_cd_rest", 60))
         msg = self.config.get("tama_resp_rest", "💤 Tucking in for a recharge. See you soon!")
         msg += f"\n⏳ {_fmt_countdown(self.manager.sleep_remaining)}"
-        await interaction.response.send_message(msg, view=TamagotchiView(self.config, self.manager))
+        await interaction.response.send_message(
+            append_tamagotchi_footer(msg, self.config, self.manager),
+            view=TamagotchiView(self.config, self.manager),
+        )
 
 
 class RPSView(ui.View):
@@ -875,7 +926,10 @@ class RPSView(ui.View):
                 f"🎮 **Rock Paper Scissors** — {interaction.user.display_name} vs Bot\n"
                 f"{text}"
             )
-            await channel.send(public_text, view=TamagotchiView(self.config, self.manager))
+            await channel.send(
+                append_tamagotchi_footer(public_text, self.config, self.manager),
+                view=TamagotchiView(self.config, self.manager),
+            )
 
         self.stop()
 
