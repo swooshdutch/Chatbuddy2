@@ -129,7 +129,7 @@ DEFAULTS = {
     ),
     "tama_action_log": [],
     "tama_inventory_initialized": False,
-    "tama_inventory_defaults_version": 2,
+    "tama_inventory_defaults_version": 3,
     "tama_inventory_items": {
         "unlimited_hamburger": {
             "name": "Hamburger",
@@ -140,6 +140,7 @@ DEFAULTS = {
             "button_style": "success",
             "amount": -1,
             "lucky_gift_prize": False,
+            "store_in_inventory": True,
         },
         "unlimited_water": {
             "name": "Cup of Water",
@@ -150,6 +151,7 @@ DEFAULTS = {
             "button_style": "primary",
             "amount": -1,
             "lucky_gift_prize": False,
+            "store_in_inventory": True,
         },
         "teddy_bear": {
             "name": "Teddy Bear",
@@ -160,6 +162,7 @@ DEFAULTS = {
             "button_style": "success",
             "amount": 0,
             "lucky_gift_prize": True,
+            "store_in_inventory": True,
         },
         "sushi": {
             "name": "Sushi",
@@ -170,6 +173,7 @@ DEFAULTS = {
             "button_style": "primary",
             "amount": 0,
             "lucky_gift_prize": True,
+            "store_in_inventory": True,
         },
         "meat_on_bone": {
             "name": "Meat on Bone",
@@ -180,6 +184,7 @@ DEFAULTS = {
             "button_style": "danger",
             "amount": 0,
             "lucky_gift_prize": True,
+            "store_in_inventory": True,
         },
         "lump_of_coal": {
             "name": "Lump of Coal",
@@ -190,6 +195,7 @@ DEFAULTS = {
             "button_style": "secondary",
             "amount": 0,
             "lucky_gift_prize": True,
+            "store_in_inventory": False,
         },
     },
     # Dirtiness / poop
@@ -225,6 +231,7 @@ DEFAULTS = {
     # Button cooldowns (seconds, global)
     "tama_cd_feed": 60,
     "tama_cd_drink": 60,
+    "tama_cd_other": 60,
     "tama_cd_play": 60,
     "tama_cd_medicate": 60,
     "tama_cd_clean": 60,

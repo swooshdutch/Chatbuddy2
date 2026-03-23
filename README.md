@@ -222,7 +222,7 @@ The Tamagotchi system is fully script-driven. The LLM is informed of current sta
 | `/show-tama-items` | Show all configured Tamagotchi inventory items and current stock |
 | `/remove-tama-item` | Remove a Tamagotchi inventory item |
 | `/set-tama-play` | Set happiness gain, hunger/thirst loss, satiation loss, and cooldown for Play |
-| `/set-tama-lucky-gift` | Set Lucky Gift cooldown and reveal countdown |
+| `/set-tama-lucky-gift` | Set Lucky Gift cooldown, reveal countdown, and misc item cooldown |
 | `/set-tama-medicate` | Set cooldown, HP heal amount, and happiness cost for Medicate |
 | `/set-tama-clean` | Set cooldown for Clean |
 
@@ -264,22 +264,23 @@ The Tamagotchi system is fully script-driven. The LLM is informed of current sta
 7. Pressing Play now opens a user-only game menu with one button per game.
 8. Rock-Paper-Scissors remains available from that menu. Intermediate choices stay private to the player; the final result is public.
 9. Lucky Gift is also available from the game menu. It has its own configurable cooldown and reveal timer, shows a live countdown, and then awards a random configured prize from the Lucky Gift pool.
-10. Food and drink are consumed from the user-only inventory menu. Each inventory item has its own emoji, button color, stock amount, fill multiplier, and optional happiness value for Lucky Gift rewards.
-11. Feed and Drink effects still share the existing global food and drink cooldowns. When satiation reaches max, eating and drinking are blocked until the satiation timer ticks it back down.
-12. Rock-Paper-Scissors play still reduces satiation by a configurable amount.
-13. Energy decreases on API use and games. When energy reaches `0`, play is blocked and stat loss is doubled until the bot rests.
-14. Rest only appears when energy is below `1`. While sleeping, the bot refuses normal chat, auto-chat, heartbeat, and revival, but reminders still fire.
-15. If the bot is left alone, passive energy recharge restores energy after a configurable inactivity period.
-16. Any interaction resets the passive recharge timer, including mentions, replies, games, inventory use, clean/medicate/rest, reminders, heartbeat, auto-chat, and revival.
-17. Hunger and thirst below the configured low-need threshold each apply extra happiness loss every turn.
-18. When the bot is sick, its happiness loss is multiplied by the configured sickness multiplier and sickness also drains HP every turn.
-19. Medicine is allowed while the bot is sick or while health is below max. It cures sickness, restores configurable HP, and costs configurable happiness.
-20. Dirt no longer appears instantly. After the configured food threshold is reached, one or more hidden poop timers are queued. Each timer picks a random whole-minute delay from `1` up to the configured max and posts a script-only poop message when it pops.
-21. Uncleaned dirt gets a grace period. If poop is not cleaned before that timer expires, the bot becomes sick.
-22. Health drops when core stats are below threshold and when sickness is active. While sick, each poop adds extra per-turn health damage on top of the normal sickness damage.
-23. If health reaches `0`, the Tamagotchi dies, soul memory is wiped, `[ce]` is broadcast, and a fresh egg starts hatching.
-24. Error messages such as cooldown, satiated, healthy/full-health medicine rejection, already clean, and no-energy are ephemeral and only shown to the user who triggered them.
-25. The visible public stat footer is stripped from stored chat context before messages are sent back to the LLM, which avoids wasting tokens and prevents hallucinated self-reported stats.
+10. Food, drink, and misc items are consumed from the user-only inventory menu. Each inventory item has its own emoji, button color, stock amount, fill multiplier, and optional happiness value.
+11. Misc items use their own configurable cooldown so things like teddy bears can be used without sharing the food or drink timers.
+12. Feed and Drink effects still share the existing global food and drink cooldowns. When satiation reaches max, eating and drinking are blocked until the satiation timer ticks it back down.
+13. Rock-Paper-Scissors play still reduces satiation by a configurable amount.
+14. Energy decreases on API use and games. When energy reaches `0`, play is blocked and stat loss is doubled until the bot rests.
+15. Rest only appears when energy is below `1`. While sleeping, the bot refuses normal chat, auto-chat, heartbeat, and revival, but reminders still fire.
+16. If the bot is left alone, passive energy recharge restores energy after a configurable inactivity period.
+17. Any interaction resets the passive recharge timer, including mentions, replies, games, inventory use, clean/medicate/rest, reminders, heartbeat, auto-chat, and revival.
+18. Hunger and thirst below the configured low-need threshold each apply extra happiness loss every turn.
+19. When the bot is sick, its happiness loss is multiplied by the configured sickness multiplier and sickness also drains HP every turn.
+20. Medicine is allowed while the bot is sick or while health is below max. It cures sickness, restores configurable HP, and costs configurable happiness.
+21. Dirt no longer appears instantly. After the configured food threshold is reached, one or more hidden poop timers are queued. Each timer picks a random whole-minute delay from `1` up to the configured max and posts a script-only poop message when it pops.
+22. Uncleaned dirt gets a grace period. If poop is not cleaned before that timer expires, the bot becomes sick.
+23. Health drops when core stats are below threshold and when sickness is active. While sick, each poop adds extra per-turn health damage on top of the normal sickness damage.
+24. If health reaches `0`, the Tamagotchi dies, soul memory is wiped, `[ce]` is broadcast, and a fresh egg starts hatching.
+25. Error messages such as cooldown, satiated, healthy/full-health medicine rejection, already clean, and no-energy are ephemeral and only shown to the user who triggered them.
+26. The visible public stat footer is stripped from stored chat context before messages are sent back to the LLM, which avoids wasting tokens and prevents hallucinated self-reported stats.
 
 ---
 

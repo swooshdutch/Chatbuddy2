@@ -150,6 +150,8 @@ def _format_tama_item_summary(item: dict) -> str:
         parts.append(f"happiness {happiness_delta:+g}")
     if item.get("lucky_gift_prize"):
         parts.append("lucky-gift prize")
+    if not item.get("store_in_inventory", True):
+        parts.append("instant-effect reward")
     return ", ".join(parts)
 
 
@@ -1993,6 +1995,7 @@ async def set_tama_drink(
     amount="Starting amount for limited items",
     unlimited="Set true for infinite stock",
     lucky_gift_prize="Whether this item can be won from Lucky Gift",
+    store_in_inventory="True = reward becomes an inventory item, False = apply effect instantly when won",
 )
 @app_commands.choices(
     item_type=[
@@ -2019,6 +2022,7 @@ async def add_tama_item(
     amount: int = 0,
     unlimited: bool = False,
     lucky_gift_prize: bool = False,
+    store_in_inventory: bool = True,
 ):
     ensure_inventory_defaults(bot_config)
     if multiplier < 0:
@@ -2039,6 +2043,7 @@ async def add_tama_item(
         "button_style": button_color.value,
         "amount": -1 if unlimited else amount,
         "lucky_gift_prize": lucky_gift_prize,
+        "store_in_inventory": store_in_inventory,
     }
     save_config(bot_config)
     stored_item = next((item for item in get_inventory_items(bot_config, visible_only=False) if item["id"] == item_id), None)
@@ -2117,20 +2122,30 @@ async def set_tama_play(
 @app_commands.describe(
     cooldown="How long Lucky Gift stays on cooldown in seconds",
     reveal_time="How long the gift countdown lasts before revealing the prize",
+    other_item_cooldown="Cooldown in seconds for using misc inventory items like teddy bears",
 )
 @app_commands.default_permissions(administrator=True)
-async def set_tama_lucky_gift(interaction: discord.Interaction, cooldown: int, reveal_time: int):
+async def set_tama_lucky_gift(
+    interaction: discord.Interaction,
+    cooldown: int,
+    reveal_time: int,
+    other_item_cooldown: int = 60,
+):
     if cooldown < 0:
         await interaction.response.send_message("⚠️ Cooldown must be ≥ 0.", ephemeral=True)
         return
     if reveal_time < 1:
         await interaction.response.send_message("⚠️ Reveal time must be at least 1 second.", ephemeral=True)
         return
+    if other_item_cooldown < 0:
+        await interaction.response.send_message("⚠️ Other item cooldown must be ≥ 0.", ephemeral=True)
+        return
     bot_config["tama_cd_lucky_gift"] = cooldown
     bot_config["tama_lucky_gift_duration"] = reveal_time
+    bot_config["tama_cd_other"] = other_item_cooldown
     save_config(bot_config)
     await interaction.response.send_message(
-        f"✅ Lucky Gift: cooldown **{cooldown}s**, reveal timer **{reveal_time}s**.",
+        f"✅ Lucky Gift: cooldown **{cooldown}s**, reveal timer **{reveal_time}s**, other-item cooldown **{other_item_cooldown}s**.",
         ephemeral=True,
     )
 
@@ -2360,7 +2375,7 @@ async def show_tama_stats(interaction: discord.Interaction):
         f"• Happiness +{c.get('tama_play_happiness', 1.0)} | Hunger -{c.get('tama_play_hunger_loss', 0.4)} | "
         f"Thirst -{c.get('tama_play_thirst_loss', 0.2)} | Satiation -{c.get('tama_play_satiation_loss', 0.5)}\n"
         f"**Lucky Gift:**\n"
-        f"• Cooldown: {c.get('tama_cd_lucky_gift', 600)}s | Reveal timer: {c.get('tama_lucky_gift_duration', 30)}s\n"
+        f"• Cooldown: {c.get('tama_cd_lucky_gift', 600)}s | Reveal timer: {c.get('tama_lucky_gift_duration', 30)}s | Other-item cooldown: {c.get('tama_cd_other', 60)}s\n"
         f"**Medicine:**\n"
         f"• Heal +{c.get('tama_medicate_health_heal', 2.0)} HP | Happiness -{c.get('tama_medicate_happiness_cost', 0.3)}\n\n"
         f"**Rest:**\n"
@@ -2368,7 +2383,7 @@ async def show_tama_stats(interaction: discord.Interaction):
         f"**Button Cooldowns:**\n"
         f"• Feed: {c.get('tama_cd_feed', 60)}s | Drink: {c.get('tama_cd_drink', 60)}s | "
         f"Play: {c.get('tama_cd_play', 60)}s | Medicate: {c.get('tama_cd_medicate', 60)}s | "
-        f"Clean: {c.get('tama_cd_clean', 60)}s | Rest: {c.get('tama_cd_rest', 60)}s | "
+        f"Clean: {c.get('tama_cd_clean', 60)}s | Rest: {c.get('tama_cd_rest', 60)}s | Other: {c.get('tama_cd_other', 60)}s | "
         f"Lucky Gift: {c.get('tama_cd_lucky_gift', 600)}s\n\n"
         f"**Inventory Items:**\n"
         f"{inventory_lines}"

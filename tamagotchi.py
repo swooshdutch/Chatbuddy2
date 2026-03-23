@@ -84,6 +84,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "button_style": "success",
         "amount": -1,
         "lucky_gift_prize": False,
+        "store_in_inventory": True,
     },
     "unlimited_water": {
         "name": "Cup of Water",
@@ -94,6 +95,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "button_style": "primary",
         "amount": -1,
         "lucky_gift_prize": False,
+        "store_in_inventory": True,
     },
     "teddy_bear": {
         "name": "Teddy Bear",
@@ -104,6 +106,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "button_style": "success",
         "amount": 0,
         "lucky_gift_prize": True,
+        "store_in_inventory": True,
     },
     "sushi": {
         "name": "Sushi",
@@ -114,6 +117,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "button_style": "primary",
         "amount": 0,
         "lucky_gift_prize": True,
+        "store_in_inventory": True,
     },
     "meat_on_bone": {
         "name": "Meat on Bone",
@@ -124,6 +128,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "button_style": "danger",
         "amount": 0,
         "lucky_gift_prize": True,
+        "store_in_inventory": True,
     },
     "lump_of_coal": {
         "name": "Lump of Coal",
@@ -134,9 +139,10 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "button_style": "secondary",
         "amount": 0,
         "lucky_gift_prize": True,
+        "store_in_inventory": False,
     },
 }
-TAMA_INVENTORY_DEFAULTS_VERSION = 2
+TAMA_INVENTORY_DEFAULTS_VERSION = 3
 
 BUTTON_STYLE_BY_NAME = {
     "primary": discord.ButtonStyle.primary,
@@ -222,6 +228,7 @@ def _normalize_inventory_item(item_id: str, raw_item: dict) -> dict:
         "is_unlimited": amount < 0,
         "stock_text": "∞" if amount < 0 else str(amount),
         "lucky_gift_prize": bool(raw_item.get("lucky_gift_prize", False)),
+        "store_in_inventory": bool(raw_item.get("store_in_inventory", True)),
     }
 
 
@@ -271,6 +278,8 @@ def _item_action_name(item: dict) -> str:
         return "feed"
     if item.get("item_type") == "drink":
         return "drink"
+    if item.get("item_type") == "misc":
+        return "other"
     return ""
 
 
@@ -1227,34 +1236,38 @@ def _lucky_gift_countdown_text(config: dict, seconds_remaining: float) -> str:
     )
 
 
-def _apply_lucky_gift_reward(config: dict, item: dict) -> tuple[float, int]:
+def _apply_lucky_gift_reward(config: dict, item: dict) -> tuple[float, int, bool]:
     items = config.setdefault("tama_inventory_items", {})
     item_entry = items.get(item["id"])
-    if isinstance(item_entry, dict):
+    stored_in_inventory = bool(item.get("store_in_inventory", True))
+    if stored_in_inventory and isinstance(item_entry, dict):
         current_amount = _coerce_item_amount(item_entry.get("amount", 0))
         if current_amount >= 0:
             item_entry["amount"] = current_amount + 1
 
     happiness_delta = round(float(item.get("happiness_delta", 0.0) or 0.0), 2)
-    max_happy = float(config.get("tama_happiness_max", 10))
-    new_happiness = min(
-        max_happy,
-        max(0.0, round(float(config.get("tama_happiness", 0)) + happiness_delta, 2)),
-    )
-    config["tama_happiness"] = new_happiness
+    if not stored_in_inventory and happiness_delta:
+        max_happy = float(config.get("tama_happiness_max", 10))
+        new_happiness = min(
+            max_happy,
+            max(0.0, round(float(config.get("tama_happiness", 0)) + happiness_delta, 2)),
+        )
+        config["tama_happiness"] = new_happiness
     save_config(config)
-    awarded_amount = 1 if not item.get("is_unlimited") else 0
-    return happiness_delta, awarded_amount
+    awarded_amount = 1 if stored_in_inventory and not item.get("is_unlimited") else 0
+    return happiness_delta, awarded_amount, stored_in_inventory
 
 
-def _lucky_gift_reveal_text(item: dict, happiness_delta: float) -> str:
+def _lucky_gift_reveal_text(item: dict, happiness_delta: float, stored_in_inventory: bool) -> str:
     parts = [f"🎁 **Lucky Gift Opened!**", f"You got {item.get('emoji', '🎁')} **{item.get('name', 'a prize')}**."]
     if item.get("item_type") in {"food", "drink"} and float(item.get("multiplier", 0.0) or 0.0) > 0:
         parts.append(f"Fill multiplier: x{item.get('multiplier', 1.0)}.")
+    if stored_in_inventory:
+        parts.append("Added to your inventory.")
     if happiness_delta > 0:
-        parts.append(f"Happiness +{_fs(happiness_delta)}.")
+        parts.append(f"Happiness +{_fs(happiness_delta)} {'applied now' if not stored_in_inventory else 'when used'}.")
     elif happiness_delta < 0:
-        parts.append(f"Happiness {_fs(happiness_delta)}.")
+        parts.append(f"Happiness {_fs(happiness_delta)} {'applied now' if not stored_in_inventory else 'when used'}.")
     return "\n".join(parts)
 
 
@@ -1293,12 +1306,6 @@ async def _consume_inventory_item(
         return
 
     action = _item_action_name(item)
-    if not action:
-        await interaction.response.send_message(
-            f"{item.get('emoji', '🎁')} {item.get('name', 'This item')} can't be used from the inventory yet.",
-            ephemeral=True,
-        )
-        return
     remaining = manager.check_cooldown(action)
     if remaining > 0:
         msg = config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
@@ -1307,7 +1314,7 @@ async def _consume_inventory_item(
         await interaction.response.send_message(msg, ephemeral=True)
         return
 
-    if manager.satiation_active:
+    if action in {"feed", "drink"} and manager.satiation_active:
         msg = config.get("tama_resp_full", "🤰 I'm stuffed!")
         remaining_sat = manager.satiation_remaining
         msg += f"\n⏳ Wait **{_discord_relative_time(remaining_sat)}**."
@@ -1345,37 +1352,60 @@ async def _consume_inventory_item(
         response_key = "tama_resp_feed"
         cooldown_key = "tama_cd_feed"
     else:
-        max_thirst = float(config.get("tama_thirst_max", 10))
-        fill = float(config.get("tama_drink_amount", 1.0)) * multiplier
-        config["tama_thirst"] = min(max_thirst, round(float(config.get("tama_thirst", 0)) + fill, 2))
+        if action == "drink":
+            max_thirst = float(config.get("tama_thirst_max", 10))
+            fill = float(config.get("tama_drink_amount", 1.0)) * multiplier
+            config["tama_thirst"] = min(max_thirst, round(float(config.get("tama_thirst", 0)) + fill, 2))
 
-        sat_inc = float(config.get("tama_satiation_drink_increase", 1.0)) * multiplier
-        config["tama_satiation"] = min(max_sat, round(float(config.get("tama_satiation", 0)) + sat_inc, 2))
+            sat_inc = float(config.get("tama_satiation_drink_increase", 1.0)) * multiplier
+            config["tama_satiation"] = min(max_sat, round(float(config.get("tama_satiation", 0)) + sat_inc, 2))
 
-        drink_energy_counter = int(config.get("tama_drink_energy_counter", 0)) + 1
-        drink_energy_every = max(1, int(config.get("tama_drink_energy_every", 3)))
-        config["tama_drink_energy_counter"] = drink_energy_counter
-        if drink_energy_counter >= drink_energy_every:
-            config["tama_drink_energy_counter"] = 0
-            energy_gain = max(0.0, float(config.get("tama_drink_energy_gain", 0.1)))
-            max_energy = float(config.get("tama_energy_max", 10))
-            config["tama_energy"] = min(
-                max_energy,
-                round(float(config.get("tama_energy", 0)) + energy_gain, 2),
+            drink_energy_counter = int(config.get("tama_drink_energy_counter", 0)) + 1
+            drink_energy_every = max(1, int(config.get("tama_drink_energy_every", 3)))
+            config["tama_drink_energy_counter"] = drink_energy_counter
+            if drink_energy_counter >= drink_energy_every:
+                config["tama_drink_energy_counter"] = 0
+                energy_gain = max(0.0, float(config.get("tama_drink_energy_gain", 0.1)))
+                max_energy = float(config.get("tama_energy_max", 10))
+                config["tama_energy"] = min(
+                    max_energy,
+                    round(float(config.get("tama_energy", 0)) + energy_gain, 2),
+                )
+            response_key = "tama_resp_drink"
+            cooldown_key = "tama_cd_drink"
+        else:
+            happiness_delta = round(float(item.get("happiness_delta", 0.0) or 0.0), 2)
+            max_happy = float(config.get("tama_happiness_max", 10))
+            config["tama_happiness"] = min(
+                max_happy,
+                max(0.0, round(float(config.get("tama_happiness", 0)) + happiness_delta, 2)),
             )
-        response_key = "tama_resp_drink"
-        cooldown_key = "tama_cd_drink"
+            response_key = None
+            cooldown_key = "tama_cd_other"
 
     if not item["is_unlimited"]:
         config["tama_inventory_items"][item_id]["amount"] = max(0, item["amount"] - 1)
 
-    manager.sync_satiation_timer()
+    if action in {"feed", "drink"}:
+        manager.sync_satiation_timer()
     save_config(config)
     manager.set_cooldown(action, int(config.get(cooldown_key, 60)))
 
-    default_response = "*nom nom* 🍔 Thanks for the food!" if action == "feed" else "*gulp gulp* 🥤 That hit the spot!"
-    msg = config.get(response_key, default_response)
-    msg = _apply_item_emoji_to_response(msg, item)
+    if action == "feed":
+        default_response = "*nom nom* 🍔 Thanks for the food!"
+        msg = config.get(response_key, default_response)
+        msg = _apply_item_emoji_to_response(msg, item)
+    elif action == "drink":
+        default_response = "*gulp gulp* 🥤 That hit the spot!"
+        msg = config.get(response_key, default_response)
+        msg = _apply_item_emoji_to_response(msg, item)
+    else:
+        happiness_delta = round(float(item.get("happiness_delta", 0.0) or 0.0), 2)
+        msg = f"{item.get('emoji', '🎁')} Used **{item.get('name', 'item')}**."
+        if happiness_delta > 0:
+            msg += f"\n😊 Happiness +{_fs(happiness_delta)}."
+        elif happiness_delta < 0:
+            msg += f"\n☹️ Happiness {_fs(happiness_delta)}."
     await interaction.response.send_message(
         append_tamagotchi_footer(msg, config, manager),
         view=TamagotchiView(config, manager),
@@ -1758,8 +1788,8 @@ class GameSelectView(ui.View):
                 break
 
         prize = random.choice(pool)
-        happiness_delta, _ = _apply_lucky_gift_reward(self.config, prize)
-        reveal = _lucky_gift_reveal_text(prize, happiness_delta)
+        happiness_delta, _, stored_in_inventory = _apply_lucky_gift_reward(self.config, prize)
+        reveal = _lucky_gift_reveal_text(prize, happiness_delta, stored_in_inventory)
         try:
             await interaction.edit_original_response(content=reveal, view=None)
         except Exception:
@@ -1767,9 +1797,11 @@ class GameSelectView(ui.View):
 
         if interaction.channel:
             public_text = f"🎁 **Lucky Gift** — {interaction.user.display_name} opened a gift and got {prize.get('emoji', '🎁')} **{prize.get('name', 'a prize')}**!"
-            if happiness_delta > 0:
+            if stored_in_inventory:
+                public_text += "\n🎒 Added to inventory."
+            if happiness_delta > 0 and not stored_in_inventory:
                 public_text += f"\n😊 Happiness +{_fs(happiness_delta)}."
-            elif happiness_delta < 0:
+            elif happiness_delta < 0 and not stored_in_inventory:
                 public_text += f"\n☹️ Happiness {_fs(happiness_delta)}."
             await interaction.channel.send(
                 append_tamagotchi_footer(public_text, self.config, self.manager),
