@@ -200,7 +200,7 @@ async def on_ready():
 
     try:
         synced = await bot.tree.sync()
-        print(f"[ChatBuddy] Online as {bot.user} â€” synced {len(synced)} command(s)")
+        print(f"[ChatBuddy] Online as {bot.user} — synced {len(synced)} command(s)")
     except Exception as e:
         print(f"[ChatBuddy] Failed to sync commands: {e}")
 
@@ -226,7 +226,7 @@ async def purgecommands(ctx):
         return
     bot.tree.clear_commands(guild=ctx.guild)
     await bot.tree.sync(guild=ctx.guild)
-    await ctx.send(f"âœ… Wiped old guild slash commands and refreshed the tree for {ctx.guild.name}.")
+    await ctx.send(f"✅ Wiped old guild slash commands and refreshed the tree for {ctx.guild.name}.")
 
 
 
@@ -440,7 +440,7 @@ async def _generate_and_respond(message: discord.Message):
                 if soul_ch:
                     joined_logs = "\n".join(soul_logs)
                     for log_chunk in chunk_message(joined_logs, limit=1900):
-                        await soul_ch.send(f"**ðŸ§  Soul Updates:**\n{log_chunk}")
+                        await soul_ch.send(f"**🧠 Soul Updates:**\n{log_chunk}")
 
         if is_dead:
             await broadcast_death(bot, bot_config)
@@ -469,7 +469,7 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
                 user_text = "(empty message)"
             batch_lines.append(f"[{msg.author.display_name}]: {user_text}")
         batched_input = (
-            "[MULTIPLE MESSAGES RECEIVED â€” respond to all of them naturally]\n"
+            "[MULTIPLE MESSAGES RECEIVED — respond to all of them naturally]\n"
             + "\n".join(batch_lines)
         )
 
@@ -585,7 +585,7 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
                 if soul_ch:
                     joined_logs = "\n".join(soul_logs)
                     for log_chunk in chunk_message(joined_logs, limit=1900):
-                        await soul_ch.send(f"**ðŸ§  Soul Updates:**\n{log_chunk}")
+                        await soul_ch.send(f"**🧠 Soul Updates:**\n{log_chunk}")
 
         if is_dead:
             await broadcast_death(bot, bot_config)
@@ -605,7 +605,7 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
 async def set_api_context(interaction: discord.Interaction, enabled: bool, limit: int, reset_time: str):
     import re
     if not re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", reset_time):
-        await interaction.response.send_message("âš ï¸ Reset time must be in 24h HH:MM format (e.g. 00:00).", ephemeral=True)
+        await interaction.response.send_message("⚠️ Reset time must be in 24h HH:MM format (e.g. 00:00).", ephemeral=True)
         return
         
     bot_config["api_context_enabled"] = enabled
@@ -615,9 +615,9 @@ async def set_api_context(interaction: discord.Interaction, enabled: bool, limit
     
     state = "enabled" if enabled else "disabled"
     await interaction.response.send_message(
-        f"âœ… API context tracking **{state}**.\n"
-        f"â€¢ Daily limit: **{limit}**\n"
-        f"â€¢ Reset time: **{reset_time}**",
+        f"✅ API context tracking **{state}**.\n"
+        f"• Daily limit: **{limit}**\n"
+        f"• Reset time: **{reset_time}**",
         ephemeral=True,
     )
 
@@ -626,7 +626,7 @@ async def set_api_context(interaction: discord.Interaction, enabled: bool, limit
 async def check_api_quota(interaction: discord.Interaction):
     if not bot_config.get("api_context_enabled", False):
         await interaction.response.send_message(
-            "âš ï¸ API Context tracking is currently **disabled**. An administrator must enable it via `/set-api-context`.", 
+            "⚠️ API Context tracking is currently **disabled**. An administrator must enable it via `/set-api-context`.", 
             ephemeral=True
         )
         return
@@ -637,10 +637,10 @@ async def check_api_quota(interaction: discord.Interaction):
     last_reset = bot_config.get("api_context_last_reset_date", "Never")
     
     await interaction.response.send_message(
-        f"ðŸ“Š **Daily API Quota Status**\n"
-        f"â€¢ Current Usage: **{usage} / {limit}** requests\n"
-        f"â€¢ Reset Time: **{reset_time}** (system time)\n"
-        f"â€¢ Last Reset Date: **{last_reset}**",
+        f"📊 **Daily API Quota Status**\n"
+        f"• Current Usage: **{usage} / {limit}** requests\n"
+        f"• Reset Time: **{reset_time}** (system time)\n"
+        f"• Last Reset Date: **{last_reset}**",
         ephemeral=True
     )
 
@@ -651,26 +651,26 @@ async def check_api_quota(interaction: discord.Interaction):
 async def set_edit_api_current_quota(interaction: discord.Interaction, amount: int):
     if not bot_config.get("api_context_enabled", False):
         await interaction.response.send_message(
-            "âš ï¸ API Context tracking is currently **disabled**. Enable it via `/set-api-context` first.",
+            "⚠️ API Context tracking is currently **disabled**. Enable it via `/set-api-context` first.",
             ephemeral=True,
         )
         return
     if amount < 0:
         await interaction.response.send_message(
-            "âš ï¸ Amount cannot be negative.", ephemeral=True
+            "⚠️ Amount cannot be negative.", ephemeral=True
         )
         return
     limit = bot_config.get("api_context_limit", 500)
     if amount > limit:
         await interaction.response.send_message(
-            f"âš ï¸ Amount **{amount}** exceeds the max quota limit of **{limit}**.",
+            f"⚠️ Amount **{amount}** exceeds the max quota limit of **{limit}**.",
             ephemeral=True,
         )
         return
     bot_config["api_context_current_usage"] = amount
     save_config(bot_config)
     await interaction.response.send_message(
-        f"âœ… API current quota manually set to **{amount} / {limit}**.",
+        f"✅ API current quota manually set to **{amount} / {limit}**.",
         ephemeral=True,
     )
 
@@ -681,7 +681,7 @@ async def set_edit_api_current_quota(interaction: discord.Interaction, amount: i
 async def set_api_key(interaction: discord.Interaction, key: str):
     bot_config["api_key"] = key
     save_config(bot_config)
-    await interaction.response.send_message("âœ… API key has been set and saved.", ephemeral=True)
+    await interaction.response.send_message("✅ API key has been set and saved.", ephemeral=True)
 
 
 @bot.tree.command(name="set-multimodal", description="Enable or disable multimodal support (images and audio)")
@@ -690,8 +690,8 @@ async def set_api_key(interaction: discord.Interaction, key: str):
 async def set_multimodal(interaction: discord.Interaction, enabled: bool):
     bot_config["multimodal_enabled"] = enabled
     save_config(bot_config)
-    state = "**enabled** ðŸ–¼ï¸/ðŸŽ¤" if enabled else "**disabled** ðŸš«"
-    await interaction.response.send_message(f"âœ… Multimodal capabilities {state}.", ephemeral=True)
+    state = "**enabled** 🖼️/🎤" if enabled else "**disabled** 🚫"
+    await interaction.response.send_message(f"✅ Multimodal capabilities {state}.", ephemeral=True)
 
 
 @bot.tree.command(name="set-gemini-web-search", description="Enable or disable Gemini Google Search Grounding")
@@ -700,8 +700,8 @@ async def set_multimodal(interaction: discord.Interaction, enabled: bool):
 async def set_gemini_web_search(interaction: discord.Interaction, enabled: bool):
     bot_config["web_search_enabled"] = enabled
     save_config(bot_config)
-    state = "**enabled** ðŸŒ" if enabled else "**disabled** ðŸš«"
-    await interaction.response.send_message(f"âœ… Web search capabilities {state}.", ephemeral=True)
+    state = "**enabled** 🌍" if enabled else "**disabled** 🚫"
+    await interaction.response.send_message(f"✅ Web search capabilities {state}.", ephemeral=True)
 
 
 @bot.tree.command(name="set-duck-search", description="Enable or disable DuckDuckGo Web Search")
@@ -710,8 +710,8 @@ async def set_gemini_web_search(interaction: discord.Interaction, enabled: bool)
 async def set_duck_search(interaction: discord.Interaction, enabled: bool):
     bot_config["duck_search_enabled"] = enabled
     save_config(bot_config)
-    state = "**enabled** ðŸ¦†" if enabled else "**disabled** ðŸš«"
-    await interaction.response.send_message(f"âœ… DuckDuckGo Web Search {state}.", ephemeral=True)
+    state = "**enabled** 🦆" if enabled else "**disabled** 🚫"
+    await interaction.response.send_message(f"✅ DuckDuckGo Web Search {state}.", ephemeral=True)
 
 
 @bot.tree.command(name="set-chat-history", description="Set how many messages of context the bot receives")
@@ -719,12 +719,12 @@ async def set_duck_search(interaction: discord.Interaction, enabled: bool):
 @app_commands.default_permissions(administrator=True)
 async def set_chat_history(interaction: discord.Interaction, limit: int):
     if limit < 1:
-        await interaction.response.send_message("âš ï¸ Limit must be at least 1.", ephemeral=True)
+        await interaction.response.send_message("⚠️ Limit must be at least 1.", ephemeral=True)
         return
     bot_config["chat_history_limit"] = limit
     save_config(bot_config)
     await interaction.response.send_message(
-        f"âœ… Chat history limit set to **{limit}** messages.", ephemeral=True
+        f"✅ Chat history limit set to **{limit}** messages.", ephemeral=True
     )
 
 
@@ -734,12 +734,12 @@ async def set_chat_history(interaction: discord.Interaction, limit: int):
 async def set_temp(interaction: discord.Interaction, temperature: float):
     if temperature < 0.0 or temperature > 2.0:
         await interaction.response.send_message(
-            "âš ï¸ Temperature must be between 0.0 and 2.0.", ephemeral=True
+            "⚠️ Temperature must be between 0.0 and 2.0.", ephemeral=True
         )
         return
     bot_config["temperature"] = temperature
     save_config(bot_config)
-    await interaction.response.send_message(f"âœ… Temperature set to **{temperature}**.", ephemeral=True)
+    await interaction.response.send_message(f"✅ Temperature set to **{temperature}**.", ephemeral=True)
 
 
 @bot.tree.command(name="set-api-endpoint-gemini", description="Set the Gemini text model endpoint")
@@ -748,7 +748,7 @@ async def set_temp(interaction: discord.Interaction, temperature: float):
 async def set_api_endpoint_gemini(interaction: discord.Interaction, endpoint: str):
     bot_config["model_endpoint_gemini"] = endpoint
     save_config(bot_config)
-    await interaction.response.send_message(f"âœ… Gemini endpoint set to **{endpoint}**.", ephemeral=True)
+    await interaction.response.send_message(f"✅ Gemini endpoint set to **{endpoint}**.", ephemeral=True)
 
 
 @bot.tree.command(name="set-api-endpoint-gemma", description="Set the Gemma text model endpoint")
@@ -757,7 +757,7 @@ async def set_api_endpoint_gemini(interaction: discord.Interaction, endpoint: st
 async def set_api_endpoint_gemma(interaction: discord.Interaction, endpoint: str):
     bot_config["model_endpoint_gemma"] = endpoint
     save_config(bot_config)
-    await interaction.response.send_message(f"âœ… Gemma endpoint set to **{endpoint}**.", ephemeral=True)
+    await interaction.response.send_message(f"✅ Gemma endpoint set to **{endpoint}**.", ephemeral=True)
 
 
 @bot.tree.command(name="set-sys-instruct", description="Set the system instruction / prompt")
@@ -767,7 +767,7 @@ async def set_sys_instruct(interaction: discord.Interaction, prompt: str):
     prompt = prompt.replace("\\n", "\n")
     bot_config["system_prompt"] = prompt
     save_config(bot_config)
-    await interaction.response.send_message("âœ… System prompt updated and saved.", ephemeral=True)
+    await interaction.response.send_message("✅ System prompt updated and saved.", ephemeral=True)
 
 
 @bot.tree.command(name="show-sys-instruct", description="Display the full effective system prompt")
@@ -777,7 +777,7 @@ async def show_sys_instruct(interaction: discord.Interaction):
     if not prompt:
         prompt = "(not set)"
 
-    full_text = f"ðŸ“ **Current effective system prompt:**\n```\n{prompt}\n```"
+    full_text = f"📝 **Current effective system prompt:**\n```\n{prompt}\n```"
     chunks = chunk_message(full_text)
     await interaction.response.send_message(chunks[0], ephemeral=True)
     for chunk in chunks[1:]:
@@ -802,22 +802,22 @@ async def set_model_mode(interaction: discord.Interaction, mode: app_commands.Ch
     if mode.value == "gemma":
         ep = bot_config.get("model_endpoint_gemma", "(not set)")
         info = (
-            f"\nâš ï¸ Gemma mode: system prompt injected into user content.\n"
-            f"â€¢ Endpoint: `{ep}`"
+            f"\n⚠️ Gemma mode: system prompt injected into user content.\n"
+            f"• Endpoint: `{ep}`"
         )
     elif mode.value == "custom":
         ep = bot_config.get("model_endpoint_custom", "(not set)")
         key_status = "set" if bot_config.get("api_key_custom", "").strip() else "not set"
         info = (
-            f"\nâš ï¸ Custom mode: system prompt injected into user content.\n"
-            f"â€¢ Endpoint: `{ep}`\n"
-            f"â€¢ Custom API key: **{key_status}**"
+            f"\n⚠️ Custom mode: system prompt injected into user content.\n"
+            f"• Endpoint: `{ep}`\n"
+            f"• Custom API key: **{key_status}**"
         )
     else:
         ep = bot_config.get("model_endpoint_gemini", "gemini-2.0-flash")
-        info = f"\nâ€¢ Endpoint: `{ep}`"
+        info = f"\n• Endpoint: `{ep}`"
     await interaction.response.send_message(
-        f"âœ… Text model mode set to **{mode.value}**.{info}", ephemeral=True
+        f"✅ Text model mode set to **{mode.value}**.{info}", ephemeral=True
     )
 
 
@@ -831,7 +831,7 @@ async def set_model_mode(interaction: discord.Interaction, mode: app_commands.Ch
 async def set_audio_mode(interaction: discord.Interaction, enabled: bool):
     if enabled and not bot_config.get("audio_endpoint", "").strip():
         await interaction.response.send_message(
-            "âš ï¸ No audio endpoint configured yet. "
+            "⚠️ No audio endpoint configured yet. "
             "Run `/set-audio-endpoint` first, then enable audio mode.",
             ephemeral=True,
         )
@@ -839,13 +839,13 @@ async def set_audio_mode(interaction: discord.Interaction, enabled: bool):
 
     bot_config["audio_enabled"] = enabled
     save_config(bot_config)
-    state = "**enabled** ðŸ”Š" if enabled else "**disabled** ðŸ”‡"
+    state = "**enabled** 🔊" if enabled else "**disabled** 🔇"
     voice = bot_config.get("audio_settings", {}).get("voice", "Aoede")
     endpoint = bot_config.get("audio_endpoint", "(not set)")
     await interaction.response.send_message(
-        f"âœ… Audio clip mode {state}.\n"
-        f"â€¢ TTS model: `{endpoint}`\n"
-        f"â€¢ Voice: **{voice}**",
+        f"✅ Audio clip mode {state}.\n"
+        f"• TTS model: `{endpoint}`\n"
+        f"• Voice: **{voice}**",
         ephemeral=True,
     )
 
@@ -857,7 +857,7 @@ async def set_audio_endpoint(interaction: discord.Interaction, endpoint: str):
     bot_config["audio_endpoint"] = endpoint
     save_config(bot_config)
     await interaction.response.send_message(
-        f"âœ… Audio (TTS) endpoint set to **{endpoint}**.", ephemeral=True
+        f"✅ Audio (TTS) endpoint set to **{endpoint}**.", ephemeral=True
     )
 
 
@@ -869,7 +869,7 @@ async def set_audio_settings(interaction: discord.Interaction, voice: str):
     audio_settings["voice"] = voice
     bot_config["audio_settings"] = audio_settings
     save_config(bot_config)
-    await interaction.response.send_message(f"âœ… Audio voice set to **{voice}**.", ephemeral=True)
+    await interaction.response.send_message(f"✅ Audio voice set to **{voice}**.", ephemeral=True)
 
 
 # ---------------------------------------------------------------------------
@@ -888,7 +888,7 @@ async def set_allowed_channel(interaction: discord.Interaction, channel: discord
     bot_config["allowed_channels"] = allowed
     save_config(bot_config)
     state = "whitelisted" if enabled else "blacklisted"
-    await interaction.response.send_message(f"âœ… {channel.mention} has been **{state}**.", ephemeral=True)
+    await interaction.response.send_message(f"✅ {channel.mention} has been **{state}**.", ephemeral=True)
 
 
 @bot.tree.command(name="set-ce", description="Enable/disable [ce] context cutoff for a channel")
@@ -904,7 +904,7 @@ async def set_ce(interaction: discord.Interaction, channel: discord.TextChannel,
     save_config(bot_config)
     state = "enabled" if enabled else "disabled"
     await interaction.response.send_message(
-        f"âœ… `[ce]` context cutoff **{state}** for {channel.mention}.", ephemeral=True
+        f"✅ `[ce]` context cutoff **{state}** for {channel.mention}.", ephemeral=True
     )
 
 
@@ -924,7 +924,7 @@ async def set_soc(interaction: discord.Interaction, channel: discord.TextChannel
         bot_config["soc_enabled"] = True
         save_config(bot_config)
         await interaction.response.send_message(
-            f"âœ… SoC thoughts channel set to {channel.mention} â€” **enabled**.\n"
+            f"✅ SoC thoughts channel set to {channel.mention} — **enabled**.\n"
             f"Text between `<my-thoughts>` and `</my-thoughts>` will be extracted and posted there.",
             ephemeral=True,
         )
@@ -932,7 +932,7 @@ async def set_soc(interaction: discord.Interaction, channel: discord.TextChannel
         bot_config["soc_enabled"] = False
         save_config(bot_config)
         await interaction.response.send_message(
-            f"âœ… SoC thoughts channel set to {channel.mention} â€” **disabled**.",
+            f"✅ SoC thoughts channel set to {channel.mention} — **disabled**.",
             ephemeral=True,
         )
 
@@ -946,19 +946,19 @@ async def set_soc(interaction: discord.Interaction, channel: discord.TextChannel
 async def set_soc_context(interaction: discord.Interaction, enabled: bool, count: int = 10):
     if enabled and not bot_config.get("soc_channel_id"):
         await interaction.response.send_message(
-            "âš ï¸ No SoC channel configured yet. Run `/set-soc` first to set a thoughts channel.",
+            "⚠️ No SoC channel configured yet. Run `/set-soc` first to set a thoughts channel.",
             ephemeral=True,
         )
         return
     if count < 1:
-        await interaction.response.send_message("âš ï¸ Count must be at least 1.", ephemeral=True)
+        await interaction.response.send_message("⚠️ Count must be at least 1.", ephemeral=True)
         return
     bot_config["soc_context_enabled"] = enabled
     bot_config["soc_context_count"] = count
     save_config(bot_config)
     state = "enabled" if enabled else "disabled"
     await interaction.response.send_message(
-        f"âœ… SoC context **{state}** â€” reading last **{count}** thought messages.",
+        f"✅ SoC context **{state}** — reading last **{count}** thought messages.",
         ephemeral=True,
     )
 
@@ -980,7 +980,7 @@ async def set_dynamic_system_prompt(interaction: discord.Interaction, prompt: st
     save_config(bot_config)
     state = "enabled" if enabled else "disabled"
     await interaction.response.send_message(
-        f"âœ… Dynamic system prompt **{state}** and saved.", ephemeral=True
+        f"✅ Dynamic system prompt **{state}** and saved.", ephemeral=True
     )
 
 
@@ -1001,7 +1001,7 @@ async def set_word_game(interaction: discord.Interaction, prompt: str, enabled: 
     save_config(bot_config)
     state = "enabled" if enabled else "disabled"
     await interaction.response.send_message(
-        f"âœ… Word game **{state}**.\n"
+        f"✅ Word game **{state}**.\n"
         f"Prompt contains `{{secret-word}}`: **{'yes' if '{secret-word}' in prompt else 'no'}**",
         ephemeral=True,
     )
@@ -1015,7 +1015,7 @@ async def set_word_game_selector_prompt(interaction: discord.Interaction, prompt
     bot_config["word_game_selector_prompt"] = prompt
     save_config(bot_config)
     await interaction.response.send_message(
-        "âœ… Word game selector prompt saved.", ephemeral=True
+        "✅ Word game selector prompt saved.", ephemeral=True
     )
 
 
@@ -1033,7 +1033,7 @@ async def set_secret_word(interaction: discord.Interaction, prompt: str):
         
     if not is_admin and not has_role:
         await interaction.response.send_message(
-            "âš ï¸ You don't have permission to use this command. "
+            "⚠️ You don't have permission to use this command. "
             "Ask an admin to grant your role access via `/set-secret-word-permission`.",
             ephemeral=True,
         )
@@ -1059,10 +1059,10 @@ async def set_secret_word(interaction: discord.Interaction, prompt: str):
         secret = word_match.group(1).strip()
         bot_config["secret_word"] = secret
         save_config(bot_config)
-        await interaction.followup.send("âœ… A new secret word has been set!", ephemeral=True)
+        await interaction.followup.send("✅ A new secret word has been set!", ephemeral=True)
     else:
         await interaction.followup.send(
-            "âš ï¸ Could not parse a secret word from the hidden turn. "
+            "⚠️ Could not parse a secret word from the hidden turn. "
             "Make sure the selector prompt instructs the model to output `{secret-word:WORD}`.",
             ephemeral=True,
         )
@@ -1088,7 +1088,7 @@ async def set_secret_word_permission(interaction: discord.Interaction, role: dis
     bot_config["secret_word_allowed_roles"] = roles_list
     save_config(bot_config)
     await interaction.response.send_message(
-        f"âœ… `/set-secret-word` access **{action}** for role **{role.name}**.",
+        f"✅ `/set-secret-word` access **{action}** for role **{role.name}**.",
         ephemeral=True,
     )
 
@@ -1113,10 +1113,10 @@ async def set_auto_chat_mode(
     idle_minutes: int = 10,
 ):
     if interval < 5:
-        await interaction.response.send_message("âš ï¸ Interval must be at least 5 seconds.", ephemeral=True)
+        await interaction.response.send_message("⚠️ Interval must be at least 5 seconds.", ephemeral=True)
         return
     if idle_minutes < 1:
-        await interaction.response.send_message("âš ï¸ Idle timeout must be at least 1 minute.", ephemeral=True)
+        await interaction.response.send_message("⚠️ Idle timeout must be at least 1 minute.", ephemeral=True)
         return
 
     bot_config["auto_chat_channel_id"] = str(channel.id)
@@ -1130,9 +1130,9 @@ async def set_auto_chat_mode(
 
     state = "enabled" if enabled else "disabled"
     await interaction.response.send_message(
-        f"âœ… Auto-chat **{state}** for {channel.mention}.\n"
-        f"â€¢ Check interval: **{interval}s**\n"
-        f"â€¢ Idle timeout: **{idle_minutes}m**",
+        f"✅ Auto-chat **{state}** for {channel.mention}.\n"
+        f"• Check interval: **{interval}s**\n"
+        f"• Idle timeout: **{idle_minutes}m**",
         ephemeral=True,
     )
 
@@ -1145,7 +1145,7 @@ async def set_auto_idle_message(interaction: discord.Interaction, message: str):
     bot_config["auto_chat_idle_message"] = message
     save_config(bot_config)
     await interaction.response.send_message(
-        f"âœ… Auto-chat idle message set to:\n```{message}```", ephemeral=True
+        f"✅ Auto-chat idle message set to:\n```{message}```", ephemeral=True
     )
 
 
@@ -1161,14 +1161,14 @@ async def set_auto_idle_message(interaction: discord.Interaction, message: str):
 @app_commands.default_permissions(administrator=True)
 async def set_soul(interaction: discord.Interaction, enabled: bool, limit: int = 2000):
     if limit < 100:
-        await interaction.response.send_message("âš ï¸ Limit must be at least 100.", ephemeral=True)
+        await interaction.response.send_message("⚠️ Limit must be at least 100.", ephemeral=True)
         return
     bot_config["soul_enabled"] = enabled
     bot_config["soul_limit"] = limit
     save_config(bot_config)
     state = "enabled" if enabled else "disabled"
     await interaction.response.send_message(
-        f"âœ… Soul feature **{state}** with a limit of **{limit}** characters.\n"
+        f"✅ Soul feature **{state}** with a limit of **{limit}** characters.\n"
         f"Bot uses `<!soul-update: text>` and `<!soul-override: text>` to update it.",
         ephemeral=True,
     )
@@ -1177,17 +1177,17 @@ async def set_soul(interaction: discord.Interaction, enabled: bool, limit: int =
 @bot.tree.command(name="show-soul", description="View the current contents of the soul")
 async def show_soul(interaction: discord.Interaction):
     if not os.path.exists("soul.md"):
-        await interaction.response.send_message("ðŸ“ Soul is currently **empty** (file does not exist).", ephemeral=True)
+        await interaction.response.send_message("📝 Soul is currently **empty** (file does not exist).", ephemeral=True)
         return
     
     with open("soul.md", "r", encoding="utf-8") as f:
         soul_text = f.read().strip()
         
     if not soul_text or soul_text == "{}":
-        await interaction.response.send_message("ðŸ“ Soul is currently **empty**.", ephemeral=True)
+        await interaction.response.send_message("📝 Soul is currently **empty**.", ephemeral=True)
         return
 
-    full_text = f"ðŸ“ **Current Soul:**\n```\n{soul_text}\n```"
+    full_text = f"📝 **Current Soul:**\n```\n{soul_text}\n```"
     chunks = chunk_message(full_text)
     await interaction.response.send_message(chunks[0], ephemeral=True)
     for chunk in chunks[1:]:
@@ -1211,7 +1211,7 @@ async def _write_soul(interaction: discord.Interaction, soul_data: dict) -> bool
     soul_limit = bot_config.get("soul_limit", 2000)
     if len(new_json) > soul_limit:
         await interaction.response.send_message(
-            f"âš ï¸ Manual edit rejected: too large ({len(new_json)} > {soul_limit} limit).", 
+            f"⚠️ Manual edit rejected: too large ({len(new_json)} > {soul_limit} limit).", 
             ephemeral=True
         )
         return False
@@ -1224,7 +1224,7 @@ async def _write_soul(interaction: discord.Interaction, soul_data: dict) -> bool
 async def wipe_soul(interaction: discord.Interaction):
     with open("soul.md", "w", encoding="utf-8") as f:
         f.write("{}")
-    await interaction.response.send_message("âœ… Soul successfully wiped.", ephemeral=True)
+    await interaction.response.send_message("✅ Soul successfully wiped.", ephemeral=True)
 
 @bot.tree.command(name="edit-soul-delete-entry", description="Delete an entry from the soul")
 @app_commands.describe(entry_name="The ID of the entry to delete")
@@ -1234,9 +1234,9 @@ async def edit_soul_delete_entry(interaction: discord.Interaction, entry_name: s
     if entry_name in soul_data:
         soul_data.pop(entry_name, None)
         if await _write_soul(interaction, soul_data):
-            await interaction.response.send_message(f"âœ… Deleted entry **{entry_name}**.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Deleted entry **{entry_name}**.", ephemeral=True)
     else:
-        await interaction.response.send_message(f"âš ï¸ Entry **{entry_name}** not found.", ephemeral=True)
+        await interaction.response.send_message(f"⚠️ Entry **{entry_name}** not found.", ephemeral=True)
 
 @bot.tree.command(name="edit-soul-add-entry", description="Add text to an entry (appends if exists)")
 @app_commands.describe(
@@ -1252,7 +1252,7 @@ async def edit_soul_add_entry(interaction: discord.Interaction, entry_name: str,
     else:
         soul_data[entry_name] = entry_text
     if await _write_soul(interaction, soul_data):
-        await interaction.response.send_message(f"âœ… Appended/added text to **{entry_name}**.", ephemeral=True)
+        await interaction.response.send_message(f"✅ Appended/added text to **{entry_name}**.", ephemeral=True)
 
 @bot.tree.command(name="edit-soul-overwrite", description="Replace the text of an entry")
 @app_commands.describe(
@@ -1265,7 +1265,7 @@ async def edit_soul_overwrite(interaction: discord.Interaction, entry_name: str,
     entry_text = entry_text.replace("\\n", "\n")
     soul_data[entry_name] = entry_text
     if await _write_soul(interaction, soul_data):
-        await interaction.response.send_message(f"âœ… Overwrote entry **{entry_name}**.", ephemeral=True)
+        await interaction.response.send_message(f"✅ Overwrote entry **{entry_name}**.", ephemeral=True)
 
 
 @bot.tree.command(name="set-soul-channel", description="Set the channel to log soul updates + enable/disable")
@@ -1279,7 +1279,7 @@ async def set_soul_channel(interaction: discord.Interaction, channel: discord.Te
     bot_config["soul_channel_enabled"] = enabled
     save_config(bot_config)
     state = "enabled" if enabled else "disabled"
-    await interaction.response.send_message(f"âœ… Soul logging **{state}** in {channel.mention}.", ephemeral=True)
+    await interaction.response.send_message(f"✅ Soul logging **{state}** in {channel.mention}.", ephemeral=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1305,7 +1305,7 @@ async def setup_reminders(interaction: discord.Interaction, enabled: bool, chann
 
     state = "enabled" if enabled else "disabled"
     await interaction.response.send_message(
-        f"âœ… Reminders **{state}** â€” output channel: {channel.mention}.",
+        f"✅ Reminders **{state}** — output channel: {channel.mention}.",
         ephemeral=True,
     )
 
@@ -1319,14 +1319,14 @@ async def setup_reminders(interaction: discord.Interaction, enabled: bool, chann
 @app_commands.default_permissions(administrator=True)
 async def add_reminder_cmd(interaction: discord.Interaction, name: str, datetime: str, prompt: str):
     if not reminder_manager:
-        await interaction.response.send_message("âš ï¸ Reminder system not initialised.", ephemeral=True)
+        await interaction.response.send_message("⚠️ Reminder system not initialised.", ephemeral=True)
         return
     err = reminder_manager.add_reminder(name, datetime, prompt)
     if err:
-        await interaction.response.send_message(f"âš ï¸ {err}", ephemeral=True)
+        await interaction.response.send_message(f"⚠️ {err}", ephemeral=True)
     else:
         await interaction.response.send_message(
-            f"âœ… Reminder **{name}** set for `{datetime}`.\nðŸ“ Prompt: {prompt}",
+            f"✅ Reminder **{name}** set for `{datetime}`.\n📝 Prompt: {prompt}",
             ephemeral=True,
         )
 
@@ -1336,13 +1336,13 @@ async def add_reminder_cmd(interaction: discord.Interaction, name: str, datetime
 @app_commands.default_permissions(administrator=True)
 async def delete_reminder_cmd(interaction: discord.Interaction, name: str):
     if not reminder_manager:
-        await interaction.response.send_message("âš ï¸ Reminder system not initialised.", ephemeral=True)
+        await interaction.response.send_message("⚠️ Reminder system not initialised.", ephemeral=True)
         return
     err = reminder_manager.delete_reminder(name)
     if err:
-        await interaction.response.send_message(f"âš ï¸ {err}", ephemeral=True)
+        await interaction.response.send_message(f"⚠️ {err}", ephemeral=True)
     else:
-        await interaction.response.send_message(f"âœ… Reminder **{name}** deleted.", ephemeral=True)
+        await interaction.response.send_message(f"✅ Reminder **{name}** deleted.", ephemeral=True)
 
 
 @bot.tree.command(name="show-reminders", description="Show all currently scheduled reminders and wake-times")
@@ -1350,7 +1350,7 @@ async def delete_reminder_cmd(interaction: discord.Interaction, name: str):
 async def show_reminders_cmd(interaction: discord.Interaction):
     from reminders import get_all_reminders_text
     text = get_all_reminders_text()
-    full = f"ðŸ“‹ **Scheduled Entries:**\n```\n{text}\n```"
+    full = f"📋 **Scheduled Entries:**\n```\n{text}\n```"
     chunks = chunk_message(full)
     await interaction.response.send_message(chunks[0], ephemeral=True)
     for chunk in chunks[1:]:
@@ -1364,7 +1364,7 @@ async def set_reminder_channel(interaction: discord.Interaction, channel: discor
     bot_config["reminders_channel_id"] = str(channel.id)
     save_config(bot_config)
     await interaction.response.send_message(
-        f"âœ… Reminders will now fire in {channel.mention}.",
+        f"✅ Reminders will now fire in {channel.mention}.",
         ephemeral=True,
     )
 
@@ -1376,7 +1376,7 @@ async def set_reminder_log_channel(interaction: discord.Interaction, channel: di
     bot_config["reminder_log_channel_id"] = str(channel.id)
     save_config(bot_config)
     await interaction.response.send_message(
-        f"âœ… Reminder log channel set to {channel.mention}.",
+        f"✅ Reminder log channel set to {channel.mention}.",
         ephemeral=True,
     )
 
@@ -1393,7 +1393,7 @@ async def set_respond_to_bot(interaction: discord.Interaction, enabled: bool):
     save_config(bot_config)
     state = "enabled" if enabled else "disabled"
     await interaction.response.send_message(
-        f"âœ… Responding to other bots is now **{state}**.",
+        f"✅ Responding to other bots is now **{state}**.",
         ephemeral=True,
     )
 
@@ -1404,13 +1404,13 @@ async def set_respond_to_bot(interaction: discord.Interaction, enabled: bool):
 async def set_respond_bot_limit(interaction: discord.Interaction, limit: int):
     if limit < 1 or limit > 9:
         await interaction.response.send_message(
-            "âŒ Limit must be between 1 and 9.", ephemeral=True
+            "❌ Limit must be between 1 and 9.", ephemeral=True
         )
         return
     bot_config["respond_bot_limit"] = limit
     save_config(bot_config)
     await interaction.response.send_message(
-        f"âœ… Bot-to-bot reply limit set to **{limit}** consecutive bot messages.",
+        f"✅ Bot-to-bot reply limit set to **{limit}** consecutive bot messages.",
         ephemeral=True,
     )
 
@@ -1449,7 +1449,7 @@ async def set_heartbeat_cmd(
 
     state = "enabled" if enabled else "disabled"
     await interaction.response.send_message(
-        f"âœ… Heartbeat **{state}** â€” every **{max(1, interval)}min** in {channel.mention}.",
+        f"✅ Heartbeat **{state}** — every **{max(1, interval)}min** in {channel.mention}.",
         ephemeral=True,
     )
 
@@ -1873,10 +1873,10 @@ async def set_tama_play(
     happiness: float, hunger_loss: float, thirst_loss: float, satiation_loss: float, cooldown: int,
 ):
     if cooldown < 0:
-        await interaction.response.send_message("âš ï¸ Cooldown must be â‰¥ 0.", ephemeral=True)
+        await interaction.response.send_message("⚠️ Cooldown must be ≥ 0.", ephemeral=True)
         return
     if satiation_loss < 0:
-        await interaction.response.send_message("âš ï¸ Satiation loss must be â‰¥ 0.", ephemeral=True)
+        await interaction.response.send_message("⚠️ Satiation loss must be ≥ 0.", ephemeral=True)
         return
     bot_config["tama_play_happiness"] = happiness
     bot_config["tama_play_hunger_loss"] = hunger_loss
@@ -2121,7 +2121,7 @@ async def reset_tama_stats(interaction: discord.Interaction):
 async def set_api_key_custom(interaction: discord.Interaction, key: str):
     bot_config["api_key_custom"] = key
     save_config(bot_config)
-    await interaction.response.send_message("âœ… Custom API key has been set and saved.", ephemeral=True)
+    await interaction.response.send_message("✅ Custom API key has been set and saved.", ephemeral=True)
 
 
 @bot.tree.command(name="set-api-endpoint-custom", description="Set the endpoint for the custom (non-Google) model")
@@ -2131,7 +2131,7 @@ async def set_api_endpoint_custom(interaction: discord.Interaction, endpoint: st
     bot_config["model_endpoint_custom"] = endpoint
     save_config(bot_config)
     await interaction.response.send_message(
-        f"âœ… Custom model endpoint set to **{endpoint}**.", ephemeral=True
+        f"✅ Custom model endpoint set to **{endpoint}**.", ephemeral=True
     )
 
 
@@ -2155,7 +2155,7 @@ async def set_chat_revival(
     enabled: bool,
 ):
     if minutes < 1:
-        await interaction.response.send_message("âš ï¸ Interval must be at least 1 minute.", ephemeral=True)
+        await interaction.response.send_message("⚠️ Interval must be at least 1 minute.", ephemeral=True)
         return
 
     system_instruct = system_instruct.replace("\\n", "\n")
@@ -2173,8 +2173,8 @@ async def set_chat_revival(
 
     state = "enabled" if enabled else "disabled"
     await interaction.response.send_message(
-        f"âœ… Chat revival set for {channel.mention} every **{minutes}** minute(s) â€” **{state}**.\n"
-        f"ðŸ“ Revival instruction: ```{system_instruct}```",
+        f"✅ Chat revival set for {channel.mention} every **{minutes}** minute(s) — **{state}**.\n"
+        f"📝 Revival instruction: ```{system_instruct}```",
         ephemeral=True,
     )
 
@@ -2187,7 +2187,7 @@ async def set_cr_leave_msg(interaction: discord.Interaction, message: str):
     bot_config["cr_leave_message"] = message
     save_config(bot_config)
     await interaction.response.send_message(
-        f"âœ… Chat revival leave message updated to:\n```{message}```", ephemeral=True
+        f"✅ Chat revival leave message updated to:\n```{message}```", ephemeral=True
     )
 
 
@@ -2199,19 +2199,19 @@ async def set_cr_leave_msg(interaction: discord.Interaction, message: str):
 @app_commands.default_permissions(administrator=True)
 async def set_cr_params(interaction: discord.Interaction, minutes: int, seconds: int):
     if minutes < 1:
-        await interaction.response.send_message("âš ï¸ Active duration must be at least 1 minute.", ephemeral=True)
+        await interaction.response.send_message("⚠️ Active duration must be at least 1 minute.", ephemeral=True)
         return
     if seconds < 5:
-        await interaction.response.send_message("âš ï¸ Check interval must be at least 5 seconds.", ephemeral=True)
+        await interaction.response.send_message("⚠️ Check interval must be at least 5 seconds.", ephemeral=True)
         return
 
     bot_config["cr_active_minutes"] = minutes
     bot_config["cr_check_seconds"] = seconds
     save_config(bot_config)
     await interaction.response.send_message(
-        f"âœ… Chat revival params updated:\n"
-        f"â€¢ Active duration: **{minutes}** minute(s)\n"
-        f"â€¢ Check interval: **{seconds}** second(s)",
+        f"✅ Chat revival params updated:\n"
+        f"• Active duration: **{minutes}** minute(s)\n"
+        f"• Check interval: **{seconds}** second(s)",
         ephemeral=True,
     )
 
