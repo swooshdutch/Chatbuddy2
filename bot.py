@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 
 from config import load_config, save_config
 from gemini_api import generate, build_system_prompt
-from utils import strip_mention, chunk_message, format_context, resolve_custom_emoji, extract_thoughts, extract_soul_updates
+from utils import strip_mention, chunk_message, format_context, resolve_custom_emoji, extract_thoughts, extract_soul_updates, collect_context_entries
 from revival import RevivalManager
 from auto_chat import AutoChatManager
 from reminders import ReminderManager
@@ -335,10 +335,12 @@ async def _generate_and_respond(message: discord.Message):
                 user_text = f"{search_ctx}\n\nUser Question/Message: {user_text}"
 
         history_limit = bot_config.get("chat_history_limit", 30)
-        history_messages = []
-        async for msg in message.channel.history(limit=history_limit, before=message):
-            history_messages.append(msg)
-        history_messages.reverse()
+        history_messages = await collect_context_entries(
+            message.channel,
+            history_limit,
+            config=bot_config,
+            before=message,
+        )
 
         ce_channels = bot_config.get("ce_channels", {})
         channel_key = str(message.channel.id)
@@ -488,10 +490,11 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
                 batched_input = f"{search_ctx}\n\nUser Question/Message: {batched_input}"
 
         history_limit = bot_config.get("chat_history_limit", 30)
-        history_messages = []
-        async for msg in channel.history(limit=history_limit):
-            history_messages.append(msg)
-        history_messages.reverse()
+        history_messages = await collect_context_entries(
+            channel,
+            history_limit,
+            config=bot_config,
+        )
 
         ce_channels = bot_config.get("ce_channels", {})
         channel_key = str(channel.id)

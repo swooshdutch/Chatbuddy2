@@ -6,11 +6,21 @@ Mention stripping, message chunking, context formatting, and emoji resolution.
 import re
 import os
 import json
-from typing import List, Dict, Tuple
+from dataclasses import dataclass
+from datetime import datetime
+from typing import List, Dict, Tuple, Union, Optional
 
 import discord
 
 _TAMAGOTCHI_FOOTER_RE = re.compile(r"\n?> -# \*\*.*?\*\*(?:\n|$)", re.DOTALL)
+
+
+@dataclass
+class ContextEntry:
+    timestamp: datetime
+    display_name: str
+    user_id: int
+    content: str
 
 
 def strip_mention(text: str, bot_id: int) -> str:
@@ -54,7 +64,133 @@ def strip_tamagotchi_footer(text: str) -> str:
     return _TAMAGOTCHI_FOOTER_RE.sub("\n", text).strip()
 
 
-def format_context(messages: List[discord.Message], ce_enabled: bool = True) -> str:
+def _entry_content(entry: Union[discord.Message, ContextEntry]) -> str:
+    if isinstance(entry, ContextEntry):
+        return entry.content
+    return entry.content
+
+
+def _to_context_entry(entry: Union[discord.Message, ContextEntry]) -> ContextEntry:
+    if isinstance(entry, ContextEntry):
+        return entry
+    return ContextEntry(
+        timestamp=entry.created_at,
+        display_name=entry.author.display_name,
+        user_id=entry.author.id,
+        content=strip_tamagotchi_footer(entry.content),
+    )
+
+
+def _build_tamagotchi_action_summary(action_events: list[dict]) -> Optional[ContextEntry]:
+    if not action_events:
+        return None
+
+    grouped: dict[tuple[str, str], int] = {}
+    for event in action_events:
+        action = str(event.get("action", "")).strip()
+        if action not in {"feed", "drink"}:
+            continue
+        user_name = str(event.get("user_name", "Unknown user")).strip() or "Unknown user"
+        grouped[(action, user_name)] = grouped.get((action, user_name), 0) + 1
+
+    if not grouped:
+        return None
+
+    parts: list[str] = []
+    for (action, user_name), count in grouped.items():
+        noun = "food" if action == "feed" else "drink"
+        parts.append(f"received {count}x {noun} from {user_name}")
+
+    last_ts = max(float(event.get("timestamp", 0.0) or 0.0) for event in action_events)
+    summary_text = "Tamagotchi activity since last turn: " + "; ".join(parts) + "."
+    return ContextEntry(
+        timestamp=datetime.utcfromtimestamp(last_ts),
+        display_name="Tamagotchi Summary",
+        user_id=0,
+        content=summary_text,
+    )
+
+
+def _collapse_tamagotchi_actions(
+    messages: List[discord.Message],
+    config: Optional[dict] = None,
+) -> List[Union[discord.Message, ContextEntry]]:
+    if not config or not config.get("tama_enabled", False):
+        return list(messages)
+
+    action_log = config.get("tama_action_log", [])
+    if not action_log:
+        return list(messages)
+
+    action_by_message_id: dict[int, dict] = {}
+    for event in action_log:
+        try:
+            message_id = int(event.get("message_id", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if message_id:
+            action_by_message_id[message_id] = event
+
+    if not action_by_message_id:
+        return list(messages)
+
+    latest_bot_turn_index = None
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if msg.id in action_by_message_id:
+            continue
+        if getattr(msg.author, "bot", False):
+            latest_bot_turn_index = i
+            break
+
+    if latest_bot_turn_index is None:
+        return list(messages)
+
+    action_events: list[dict] = []
+    action_message_ids: set[int] = set()
+    for msg in messages[latest_bot_turn_index + 1:]:
+        event = action_by_message_id.get(msg.id)
+        if event and event.get("action") in {"feed", "drink"}:
+            action_events.append(event)
+            action_message_ids.add(msg.id)
+
+    if not action_events:
+        return list(messages)
+
+    summary_entry = _build_tamagotchi_action_summary(action_events)
+    collapsed: List[Union[discord.Message, ContextEntry]] = []
+
+    for i, msg in enumerate(messages):
+        if msg.id in action_message_ids:
+            continue
+
+        collapsed.append(msg)
+        if i == latest_bot_turn_index and summary_entry:
+            collapsed.append(summary_entry)
+
+    return collapsed
+
+
+async def collect_context_entries(
+    channel: discord.abc.Messageable,
+    limit: int,
+    *,
+    config: Optional[dict] = None,
+    before: Optional[discord.Message] = None,
+) -> List[Union[discord.Message, ContextEntry]]:
+    fetch_limit = max(limit * 4, 120)
+    messages: List[discord.Message] = []
+    async for msg in channel.history(limit=fetch_limit, before=before):
+        messages.append(msg)
+    messages.reverse()
+
+    collapsed = _collapse_tamagotchi_actions(messages, config=config)
+    if len(collapsed) > limit:
+        collapsed = collapsed[-limit:]
+    return collapsed
+
+
+def format_context(messages: List[Union[discord.Message, ContextEntry]], ce_enabled: bool = True) -> str:
     """
     Format a list of Discord messages into a rich context string.
 
@@ -73,18 +209,16 @@ def format_context(messages: List[discord.Message], ce_enabled: bool = True) -> 
         # Find the index of the LAST [ce] message
         ce_index = None
         for i, msg in enumerate(messages):
-            if msg.content.strip().lower() == "[ce]":
+            if _entry_content(msg).strip().lower() == "[ce]":
                 ce_index = i
         if ce_index is not None:
             messages = messages[ce_index + 1:]  # everything after the last [ce]
 
     lines: List[str] = []
     for msg in messages:
-        timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
-        display_name = msg.author.display_name
-        user_id = msg.author.id
-        content = strip_tamagotchi_footer(msg.content)  # raw content minus visible stat footer
-        lines.append(f"[{timestamp}] {display_name} (ID:{user_id}): {content}")
+        entry = _to_context_entry(msg)
+        timestamp = entry.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        lines.append(f"[{timestamp}] {entry.display_name} (ID:{entry.user_id}): {entry.content}")
     return "\n".join(lines)
 
 

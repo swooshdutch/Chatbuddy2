@@ -35,6 +35,36 @@ def _fmt_countdown(seconds: float) -> str:
     return f"{s}s"
 
 
+def _discord_relative_time(seconds: float) -> str:
+    target = int(time.time() + max(0.0, seconds))
+    return f"<t:{target}:R>"
+
+
+def _discord_relative_epoch(epoch: float) -> str:
+    return f"<t:{max(0, int(epoch))}:R>"
+
+
+def _log_tamagotchi_action(
+    config: dict,
+    interaction: discord.Interaction,
+    action: str,
+    message_id: int,
+) -> None:
+    action_log = list(config.get("tama_action_log", []))
+    action_log.append(
+        {
+            "action": action,
+            "channel_id": str(interaction.channel_id or ""),
+            "user_id": str(interaction.user.id),
+            "user_name": interaction.user.display_name,
+            "message_id": str(message_id),
+            "timestamp": time.time(),
+        }
+    )
+    config["tama_action_log"] = action_log[-200:]
+    save_config(config)
+
+
 def is_sleeping(config: dict) -> bool:
     """Return True while the rest timer is active."""
     sleep_until = float(config.get("tama_sleep_until", 0.0) or 0.0)
@@ -53,7 +83,7 @@ def sleeping_remaining(config: dict) -> float:
 
 def build_sleeping_message(config: dict) -> str:
     template = config.get("tama_resp_sleeping", "I am sleeping come back in {time}")
-    return template.replace("{time}", _fmt_countdown(sleeping_remaining(config)))
+    return template.replace("{time}", _discord_relative_time(sleeping_remaining(config)))
 
 
 def can_use_energy(config: dict) -> bool:
@@ -512,7 +542,7 @@ def build_tamagotchi_message_footer(config: dict, manager: TamagotchiManager | N
 
     sat_text = f"🤰 {_fs(config.get('tama_satiation', 0))}/{config.get('tama_satiation_max', 10)}"
     if manager and manager.satiation_active:
-        sat_text = f"🤰 {_fmt_countdown(manager.satiation_remaining)}"
+        sat_text = f"🤰 {_discord_relative_epoch(manager._satiation_expiry)}"
 
     parts = [
         f"🍔 {_fs(config.get('tama_hunger', 0))}/{config.get('tama_hunger_max', 10)}",
@@ -527,7 +557,7 @@ def build_tamagotchi_message_footer(config: dict, manager: TamagotchiManager | N
     if config.get("tama_sick", False):
         parts.append("💀 Sick")
     if manager and manager.sleeping:
-        parts.append(f"💤 {_fmt_countdown(manager.sleep_remaining)}")
+        parts.append(f"💤 {_discord_relative_epoch(manager._sleep_expiry)}")
 
     return "\n> -# **" + " | ".join(parts) + "**"
 
@@ -653,7 +683,7 @@ class FeedButton(ui.Button):
         remaining = self.manager.check_cooldown("feed")
         if remaining > 0:
             msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
-                "{time}", _fmt_countdown(remaining)
+                "{time}", _discord_relative_time(remaining)
             )
             await interaction.response.send_message(msg, ephemeral=True)
             return
@@ -662,7 +692,7 @@ class FeedButton(ui.Button):
         if self.manager.satiation_active:
             msg = self.config.get("tama_resp_full", "🤰 I'm stuffed!")
             remaining_sat = self.manager.satiation_remaining
-            msg += f"\n⏳ Wait **{_fmt_countdown(remaining_sat)}**."
+            msg += f"\n⏳ Wait **{_discord_relative_time(remaining_sat)}**."
             await interaction.response.send_message(msg, ephemeral=True)
             return
 
@@ -709,6 +739,8 @@ class FeedButton(ui.Button):
             append_tamagotchi_footer(msg, self.config, self.manager),
             view=TamagotchiView(self.config, self.manager),
         )
+        response_message = await interaction.original_response()
+        _log_tamagotchi_action(self.config, interaction, "feed", response_message.id)
 
 
 class DrinkButton(ui.Button):
@@ -731,7 +763,7 @@ class DrinkButton(ui.Button):
         remaining = self.manager.check_cooldown("drink")
         if remaining > 0:
             msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
-                "{time}", _fmt_countdown(remaining)
+                "{time}", _discord_relative_time(remaining)
             )
             await interaction.response.send_message(msg, ephemeral=True)
             return
@@ -739,7 +771,7 @@ class DrinkButton(ui.Button):
         if self.manager.satiation_active:
             msg = self.config.get("tama_resp_full", "🤰 I'm stuffed!")
             remaining_sat = self.manager.satiation_remaining
-            msg += f"\n⏳ Wait **{_fmt_countdown(remaining_sat)}**."
+            msg += f"\n⏳ Wait **{_discord_relative_time(remaining_sat)}**."
             await interaction.response.send_message(msg, ephemeral=True)
             return
 
@@ -776,6 +808,8 @@ class DrinkButton(ui.Button):
             append_tamagotchi_footer(msg, self.config, self.manager),
             view=TamagotchiView(self.config, self.manager),
         )
+        response_message = await interaction.original_response()
+        _log_tamagotchi_action(self.config, interaction, "drink", response_message.id)
 
 
 class PlayButton(ui.Button):
@@ -803,13 +837,20 @@ class PlayButton(ui.Button):
         remaining = self.manager.check_cooldown("play")
         if remaining > 0:
             msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
-                "{time}", _fmt_countdown(remaining)
+                "{time}", _discord_relative_time(remaining)
             )
             await interaction.response.send_message(msg, ephemeral=True)
             return
 
         if not can_use_energy(self.config):
             await interaction.response.send_message(_no_energy_message(self.config), ephemeral=True)
+            return
+
+        if self.manager.satiation_active:
+            msg = self.config.get("tama_resp_full", "🤰 I'm stuffed!")
+            remaining_sat = self.manager.satiation_remaining
+            msg += f"\n⏳ Wait **{_discord_relative_time(remaining_sat)}** before playing again."
+            await interaction.response.send_message(msg, ephemeral=True)
             return
 
         # Apply hunger/thirst loss for playing
@@ -870,7 +911,7 @@ class MedicateButton(ui.Button):
         remaining = self.manager.check_cooldown("medicate")
         if remaining > 0:
             msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
-                "{time}", _fmt_countdown(remaining)
+                "{time}", _discord_relative_time(remaining)
             )
             await interaction.response.send_message(msg, ephemeral=True)
             return
@@ -910,7 +951,7 @@ class CleanButton(ui.Button):
         remaining = self.manager.check_cooldown("clean")
         if remaining > 0:
             msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
-                "{time}", _fmt_countdown(remaining)
+                "{time}", _discord_relative_time(remaining)
             )
             await interaction.response.send_message(msg, ephemeral=True)
             return
@@ -953,7 +994,7 @@ class RestButton(ui.Button):
         remaining = self.manager.check_cooldown("rest")
         if remaining > 0:
             msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
-                "{time}", _fmt_countdown(remaining)
+                "{time}", _discord_relative_time(remaining)
             )
             await interaction.response.send_message(msg, ephemeral=True)
             return
@@ -965,7 +1006,7 @@ class RestButton(ui.Button):
         self.manager.begin_rest()
         self.manager.set_cooldown("rest", self.config.get("tama_cd_rest", 60))
         msg = self.config.get("tama_resp_rest", "💤 Tucking in for a recharge. See you soon!")
-        msg += f"\n⏳ {_fmt_countdown(self.manager.sleep_remaining)}"
+        msg += f"\n⏳ {_discord_relative_time(self.manager.sleep_remaining)}"
         await interaction.response.send_message(
             append_tamagotchi_footer(msg, self.config, self.manager),
             view=TamagotchiView(self.config, self.manager),

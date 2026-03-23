@@ -99,7 +99,7 @@ DEFAULTS = {
     # Satiation
     "tama_satiation": 0.0,
     "tama_satiation_max": 10,
-    "tama_satiation_timer": 300,
+    "tama_satiation_timer": 180,
     "tama_satiation_timer_decrease": 1.0,
     "tama_satiation_food_increase": 1.0,
     "tama_satiation_drink_increase": 1.0,
@@ -116,6 +116,7 @@ DEFAULTS = {
     "tama_cd_rest": 60,
     "tama_sleeping": False,
     "tama_sleep_until": 0.0,
+    "tama_action_log": [],
     # Dirtiness / poop
     "tama_dirt": 0,
     "tama_dirt_max": 4,

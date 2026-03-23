@@ -12,7 +12,7 @@ from discord.ext import tasks
 
 from config import save_config
 from gemini_api import generate
-from utils import format_context, chunk_message, resolve_custom_emoji, extract_thoughts, extract_reminder_commands
+from utils import format_context, chunk_message, resolve_custom_emoji, extract_thoughts, extract_reminder_commands, collect_context_entries
 from tamagotchi import TamagotchiView, append_tamagotchi_footer, is_sleeping
 
 
@@ -96,10 +96,11 @@ class RevivalManager:
 
         # Gather recent context from the channel
         history_limit = self.config.get("chat_history_limit", 30)
-        history_messages = []
-        async for msg in channel.history(limit=history_limit):
-            history_messages.append(msg)
-        history_messages.reverse()
+        history_messages = await collect_context_entries(
+            channel,
+            history_limit,
+            config=self.config,
+        )
 
         context = format_context(history_messages, ce_enabled=True)
 
@@ -257,10 +258,11 @@ class RevivalManager:
 
                 # Gather context and reply
                 history_limit = self.config.get("chat_history_limit", 30)
-                history_messages = []
-                async for msg in channel.history(limit=history_limit):
-                    history_messages.append(msg)
-                history_messages.reverse()
+                history_messages = await collect_context_entries(
+                    channel,
+                    history_limit,
+                    config=self.config,
+                )
 
                 context = format_context(history_messages, ce_enabled=True)
 
