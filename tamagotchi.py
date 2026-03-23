@@ -81,6 +81,8 @@ class TamagotchiManager:
         self._satiation_task: asyncio.Task | None = None
         self._satiation_expiry: float = 0.0
         self._dirt_task: asyncio.Task | None = None
+        self._energy_task: asyncio.Task | None = None
+        self._energy_expiry: float = 0.0
         self._sleep_task: asyncio.Task | None = None
         self._sleep_expiry: float = 0.0
         self._rps_games: dict[int, str] = {}        # msg_id -> bot_choice
@@ -94,12 +96,15 @@ class TamagotchiManager:
             if self.config.get("tama_satiation", 0) >= self.config.get("tama_satiation_max", 10):
                 self.start_satiation_timer()
             self._start_dirt_task()
+            self.record_interaction(save=False)
 
     def stop(self):
         if self._satiation_task and not self._satiation_task.done():
             self._satiation_task.cancel()
         if self._dirt_task and not self._dirt_task.done():
             self._dirt_task.cancel()
+        if self._energy_task and not self._energy_task.done():
+            self._energy_task.cancel()
         if self._sleep_task and not self._sleep_task.done():
             self._sleep_task.cancel()
 
@@ -116,6 +121,37 @@ class TamagotchiManager:
 
     def set_cooldown(self, action: str, seconds: int):
         self._cooldowns[action] = time.time() + seconds
+
+    # —— interaction / energy recharge ——–––––––––––––––––––––––––––––––––––
+
+    def record_interaction(self, *, save: bool = True):
+        if not self.config.get("tama_enabled", False):
+            return
+        self.config["tama_last_interaction_at"] = time.time()
+        if save:
+            save_config(self.config)
+        self._start_energy_task()
+
+    def _start_energy_task(self):
+        interval = max(1, int(self.config.get("tama_energy_recharge_interval", 300)))
+        self._energy_expiry = time.time() + interval
+        if self._energy_task and not self._energy_task.done():
+            self._energy_task.cancel()
+        self._energy_task = asyncio.create_task(self._energy_recharge_loop())
+
+    async def _energy_recharge_loop(self):
+        try:
+            while True:
+                interval = max(1, int(self.config.get("tama_energy_recharge_interval", 300)))
+                self._energy_expiry = time.time() + interval
+                await asyncio.sleep(interval)
+                current = float(self.config.get("tama_energy", 0))
+                maximum = float(self.config.get("tama_energy_max", 10))
+                recharge = max(0.0, float(self.config.get("tama_energy_recharge_amount", 0.5)))
+                self.config["tama_energy"] = min(maximum, round(current + recharge, 2))
+                save_config(self.config)
+        except asyncio.CancelledError:
+            return
 
     # —— sleep / rest ——––––––––––––––––––––––––––––––––––––––––––––––––––––
 
@@ -166,17 +202,31 @@ class TamagotchiManager:
 
     @property
     def satiation_active(self) -> bool:
+        if self.config.get("tama_satiation", 0) < self.config.get("tama_satiation_max", 10):
+            self.clear_satiation_timer()
+            return False
         return self._satiation_expiry > time.time()
 
     @property
     def satiation_remaining(self) -> float:
         return max(0.0, self._satiation_expiry - time.time())
 
+    def clear_satiation_timer(self):
+        self._satiation_expiry = 0.0
+        if self._satiation_task and not self._satiation_task.done():
+            self._satiation_task.cancel()
+
+    def sync_satiation_timer(self):
+        if self.config.get("tama_satiation", 0) >= self.config.get("tama_satiation_max", 10):
+            self.start_satiation_timer()
+        else:
+            self.clear_satiation_timer()
+
     def start_satiation_timer(self):
         interval = max(1, int(self.config.get("tama_satiation_timer", 300)))
         self._satiation_expiry = time.time() + interval
-        if self._satiation_task and not self._satiation_task.done():
-            self._satiation_task.cancel()
+        self.clear_satiation_timer()
+        self._satiation_expiry = time.time() + interval
         self._satiation_task = asyncio.create_task(self._satiation_countdown())
 
     async def _satiation_countdown(self):
@@ -592,6 +642,7 @@ class FeedButton(ui.Button):
         self.manager = manager
 
     async def callback(self, interaction: discord.Interaction):
+        self.manager.record_interaction()
         if self.manager.sleeping:
             await _send_sleep_block(interaction, self.config)
             return
@@ -635,9 +686,7 @@ class FeedButton(ui.Button):
             self.config["tama_dirt"] = min(max_dirt, self.config.get("tama_dirt", 0) + 1)
             self.config["tama_dirt_food_counter"] = 0
 
-        # Check if satiation is now full → start timer
-        if self.config["tama_satiation"] >= max_sat:
-            self.manager.start_satiation_timer()
+        self.manager.sync_satiation_timer()
 
         save_config(self.config)
         self.manager.set_cooldown("feed", self.config.get("tama_cd_feed", 60))
@@ -660,6 +709,7 @@ class DrinkButton(ui.Button):
         self.manager = manager
 
     async def callback(self, interaction: discord.Interaction):
+        self.manager.record_interaction()
         if self.manager.sleeping:
             await _send_sleep_block(interaction, self.config)
             return
@@ -691,8 +741,7 @@ class DrinkButton(ui.Button):
             float(max_sat), round(self.config.get("tama_satiation", 0) + sat_inc, 2)
         )
 
-        if self.config["tama_satiation"] >= max_sat:
-            self.manager.start_satiation_timer()
+        self.manager.sync_satiation_timer()
 
         save_config(self.config)
         self.manager.set_cooldown("drink", self.config.get("tama_cd_drink", 60))
@@ -720,6 +769,7 @@ class PlayButton(ui.Button):
         self.manager = manager
 
     async def callback(self, interaction: discord.Interaction):
+        self.manager.record_interaction()
         if self.manager.sleeping:
             await _send_sleep_block(interaction, self.config)
             return
@@ -745,6 +795,11 @@ class PlayButton(ui.Button):
         self.config["tama_thirst"] = max(
             0.0, round(self.config.get("tama_thirst", 0) - thirst_loss, 2)
         )
+        satiation_loss = self.config.get("tama_play_satiation_loss", 0.5)
+        self.config["tama_satiation"] = max(
+            0.0, round(self.config.get("tama_satiation", 0) - satiation_loss, 2)
+        )
+        self.manager.sync_satiation_timer()
 
         # Happiness increase
         happy_gain = self.config.get("tama_play_happiness", 1.0)
@@ -781,6 +836,7 @@ class MedicateButton(ui.Button):
         self.manager = manager
 
     async def callback(self, interaction: discord.Interaction):
+        self.manager.record_interaction()
         if self.manager.sleeping:
             await _send_sleep_block(interaction, self.config)
             return
@@ -820,6 +876,7 @@ class CleanButton(ui.Button):
         self.manager = manager
 
     async def callback(self, interaction: discord.Interaction):
+        self.manager.record_interaction()
         if self.manager.sleeping:
             await _send_sleep_block(interaction, self.config)
             return
@@ -866,6 +923,7 @@ class RestButton(ui.Button):
         self.manager = manager
 
     async def callback(self, interaction: discord.Interaction):
+        self.manager.record_interaction()
         remaining = self.manager.check_cooldown("rest")
         if remaining > 0:
             msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(

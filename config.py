@@ -109,6 +109,9 @@ DEFAULTS = {
     "tama_energy_max": 10,
     "tama_energy_depletion_api": 0.1,
     "tama_energy_depletion_game": 0.2,
+    "tama_energy_recharge_interval": 300,
+    "tama_energy_recharge_amount": 0.5,
+    "tama_last_interaction_at": 0.0,
     "tama_rest_duration": 300,
     "tama_cd_rest": 60,
     "tama_sleeping": False,
@@ -129,6 +132,7 @@ DEFAULTS = {
     "tama_play_happiness": 1.0,
     "tama_play_hunger_loss": 0.4,
     "tama_play_thirst_loss": 0.2,
+    "tama_play_satiation_loss": 0.5,
     # Button cooldowns (seconds, global)
     "tama_cd_feed": 60,
     "tama_cd_drink": 60,

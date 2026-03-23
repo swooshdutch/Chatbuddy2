@@ -301,6 +301,9 @@ class ReminderManager:
         """
         try:
             from gemini_api import generate  # lazy to avoid circular import
+            tama_manager = getattr(self.bot, "tama_manager", None)
+            if self.config.get("tama_enabled", False) and tama_manager:
+                tama_manager.record_interaction()
 
             # Gather recent channel context so the bot has conversational awareness
             history_limit = self.config.get("chat_history_limit", 30)

@@ -133,6 +133,9 @@ class RevivalManager:
                     )
 
         # Generate the revival message
+        tama_manager = getattr(self.bot, "tama_manager", None)
+        if self.config.get("tama_enabled", False) and tama_manager:
+            tama_manager.record_interaction()
         response_text, audio_bytes, soul_logs, reminder_cmds = await generate(
             prompt="Start a new conversation to revive the chat.",
             context=context,
@@ -293,6 +296,9 @@ class RevivalManager:
                 user_text = last_msg.clean_content
                 if not user_text:
                     user_text = "(empty message)"
+                tama_manager = getattr(self.bot, "tama_manager", None)
+                if self.config.get("tama_enabled", False) and tama_manager:
+                    tama_manager.record_interaction()
 
                 response_text, audio_bytes, soul_logs, reminder_cmds = await generate(
                     prompt=user_text,

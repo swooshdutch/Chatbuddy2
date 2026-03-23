@@ -125,6 +125,9 @@ class AutoChatManager:
 
         try:
             async with channel.typing():
+                tama_manager = getattr(self.bot, "tama_manager", None)
+                if self.config.get("tama_enabled", False) and tama_manager:
+                    tama_manager.record_interaction()
                 # Gather chat history
                 history_limit = self.config.get("chat_history_limit", 30)
                 history_messages = []
