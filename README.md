@@ -210,6 +210,8 @@ The Tamagotchi system is fully script-driven. The LLM is informed of current sta
 | `/set-tama-hatch-time` | Set how long the egg takes to hatch |
 | `/set-tama-hatch-prompt` | Set the hidden prompt the bot receives when the egg hatches |
 | `/set-tama-wake-prompt` | Set the hidden prompt the bot receives when it wakes from sleep |
+| `/set-tama-chatter` | Enable or disable the chatter button and set its cooldown |
+| `/set-tama-chatter-prompt` | Set the hidden prompt the bot receives when the chatter button is used |
 | `/set-tama-dirt` | Set max dirt, food threshold for poop timers, poop timer max length, sickness grace time, and extra sick damage per poop |
 | `/set-tama-sickness` | Set health damage per turn while sick |
 
@@ -258,9 +260,9 @@ The Tamagotchi system is fully script-driven. The LLM is informed of current sta
 1. Enable it with `/set-tama-mode true` or `/set-tamagotchi-mode true`.
 2. `setup-bot` starts a fresh egg hatch in the main chat channel, and `/reset-tama-stats` does the same when Tamagotchi mode is enabled.
 3. While the egg is hatching, users cannot chat with the bot. The egg message shows a live countdown, and when it reaches zero the bot receives a hidden configurable hatch prompt and sends its first public message.
-4. A newly hatched bot starts with hunger and thirst at 50% of their configured max values, while happiness, health, and energy start full.
+4. A newly hatched bot starts with hunger, thirst, and happiness at 50% of their configured max values, while health and energy start full.
 5. Public bot messages use the compact quoted stat footer as the visible stat display. Happiness uses a dynamic emoji based on its current percent, and a skull icon appears whenever the bot is sick.
-6. Inventory and Play are always attached to public Tamagotchi messages. Medicate appears while the bot is sick or missing health, and Clean only appears while dirty.
+6. Inventory, Chatter, and Play are always attached to public Tamagotchi messages. Medicate appears while the bot is sick or missing health, and Clean only appears while dirty.
 7. Pressing Play now opens a user-only game menu with one button per game.
 8. Rock-Paper-Scissors remains available from that menu. Intermediate choices stay private to the player; the final result is public.
 9. Lucky Gift is also available from the game menu. It has its own configurable cooldown and reveal timer, shows a live countdown, and then awards a random configured prize from the Lucky Gift pool.
@@ -274,6 +276,7 @@ The Tamagotchi system is fully script-driven. The LLM is informed of current sta
 17. Any real interaction resets both the passive recharge timer and the loneliness timer, including mentions, replies, games, inventory use, clean/medicate/rest, and any auto-chat or heartbeat cycle whose latest context message came from someone other than the bot itself.
 18. Happiness no longer drains per turn by default. Instead it drops by the configured amount each time the configured loneliness interval passes without interaction, and you can also configure extra happiness loss on LLM turns when energy falls below a chosen percentage.
 19. When the bot is sick, sickness drains HP every turn.
+20. The Chatter button is grey like Play, Medicate, and Clean. It can be enabled or disabled, has its own cooldown, and triggers a configurable hidden system prompt that lets the bot decide what to say based on recent chat history.
 20. Medicine is allowed while the bot is sick or while health is below max. It cures sickness, restores configurable HP, and costs configurable happiness.
 21. Dirt no longer appears instantly. After the configured food threshold is reached, one or more hidden poop timers are queued. Each timer picks a random whole-minute delay from `1` up to the configured max and posts a script-only poop message when it pops.
 22. Uncleaned dirt gets a grace period. If poop is not cleaned before that timer expires, the bot becomes sick.

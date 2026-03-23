@@ -1864,6 +1864,35 @@ async def set_tama_wake_prompt(interaction: discord.Interaction, prompt: str):
     await interaction.response.send_message("✅ Wake prompt updated.", ephemeral=True)
 
 
+@bot.tree.command(name="set-tama-chatter", description="Configure the chatter button")
+@app_commands.describe(
+    enabled="Whether the chatter button is visible and usable",
+    cooldown="Cooldown in seconds between chatter button uses",
+)
+@app_commands.default_permissions(administrator=True)
+async def set_tama_chatter(interaction: discord.Interaction, enabled: bool, cooldown: int = 30):
+    if cooldown < 0:
+        await interaction.response.send_message("⚠️ Cooldown must be ≥ 0.", ephemeral=True)
+        return
+    bot_config["tama_chatter_enabled"] = enabled
+    bot_config["tama_chatter_cooldown"] = cooldown
+    save_config(bot_config)
+    state = "enabled" if enabled else "disabled"
+    await interaction.response.send_message(
+        f"✅ Chatter button {state} with **{cooldown}s** cooldown.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="set-tama-chatter-prompt", description="Configure the hidden prompt used by the chatter button")
+@app_commands.describe(prompt="The automated input the bot receives when the chatter button is used")
+@app_commands.default_permissions(administrator=True)
+async def set_tama_chatter_prompt(interaction: discord.Interaction, prompt: str):
+    bot_config["tama_chatter_prompt"] = prompt.strip()
+    save_config(bot_config)
+    await interaction.response.send_message("✅ Chatter prompt updated.", ephemeral=True)
+
+
 @bot.tree.command(name="set-tama-dirt", description="Configure the dirtiness/poop system")
 @app_commands.describe(
     max="Max poop count before cap",
@@ -2367,6 +2396,9 @@ async def show_tama_stats(interaction: discord.Interaction):
         f"(counter: {c.get('tama_drink_energy_counter', 0)})\n\n"
         f"**Play Effects:**\n"
         f"• Happiness +{c.get('tama_play_happiness', 10.0)}\n"
+        f"**Chatter:**\n"
+        f"• Enabled: {'yes' if c.get('tama_chatter_enabled', True) else 'no'} | Cooldown: {c.get('tama_chatter_cooldown', 30)}s\n"
+        f"• Prompt: {c.get('tama_chatter_prompt', '') or '(default)'}\n"
         f"**Lucky Gift:**\n"
         f"• Cooldown: {c.get('tama_cd_lucky_gift', 600)}s | Reveal timer: {c.get('tama_lucky_gift_duration', 30)}s | Other-item cooldown: {c.get('tama_cd_other', 60)}s\n"
         f"**Medicine:**\n"
@@ -2376,7 +2408,7 @@ async def show_tama_stats(interaction: discord.Interaction):
         f"• Wake prompt: {c.get('tama_wake_prompt', '') or '(default)'}\n\n"
         f"**Button Cooldowns:**\n"
         f"• Feed: {c.get('tama_cd_feed', 60)}s | Drink: {c.get('tama_cd_drink', 60)}s | "
-        f"Play: {c.get('tama_cd_play', 60)}s | Medicate: {c.get('tama_cd_medicate', 60)}s | "
+        f"Play: {c.get('tama_cd_play', 60)}s | Chatter: {c.get('tama_chatter_cooldown', 30)}s | Medicate: {c.get('tama_cd_medicate', 60)}s | "
         f"Clean: {c.get('tama_cd_clean', 60)}s | Other: {c.get('tama_cd_other', 60)}s | "
         f"Lucky Gift: {c.get('tama_cd_lucky_gift', 600)}s\n\n"
         f"**Inventory Items:**\n"
@@ -2718,7 +2750,7 @@ async def help_command(interaction: discord.Interaction):
             "**Stats:** `/set-tama-hunger` `/set-tama-thirst` `/set-tama-happiness` "
             "`/set-tama-health` `/set-tama-energy` `/set-tama-dirt` "
             "`/set-tama-sickness` `/set-tama-rest` `/set-tama-low-energy-mood` `/set-tama-hatch-time` "
-            "`/set-tama-hatch-prompt` `/set-tama-wake-prompt`\n"
+            "`/set-tama-hatch-prompt` `/set-tama-wake-prompt` `/set-tama-chatter` `/set-tama-chatter-prompt`\n"
             "**Buttons:** `/set-tama-feed` `/set-tama-drink` `/set-tama-play` "
             "`/set-tama-lucky-gift` `/set-tama-medicate` `/set-tama-clean`\n"
             "**Inventory:** `/add-tama-item` `/show-tama-items` `/remove-tama-item`\n"
@@ -2743,7 +2775,7 @@ async def help_command(interaction: discord.Interaction):
             "Hunger and thirst now drain from energy use instead of per turn, happiness drains only from loneliness, "
             "critically low energy can also drain happiness on LLM turns, medicine and clean only appear when relevant, "
             "Lucky Gift can award inventory items and happiness changes, inventory food can queue randomized poop timers, "
-            "and hitting 0 energy now puts the bot to sleep automatically."
+            "the chatter button can trigger an autonomous chat turn, and hitting 0 energy now puts the bot to sleep automatically."
         ),
         inline=False,
     )

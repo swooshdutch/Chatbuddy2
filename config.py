@@ -132,6 +132,12 @@ DEFAULTS = {
         "Let the chat know you are awake again. Review any messages sent after you fell asleep "
         "and decide whether you want to respond to anyone."
     ),
+    "tama_chatter_enabled": True,
+    "tama_chatter_cooldown": 30,
+    "tama_chatter_prompt": (
+        "This is an automated system message: you are free to speak in chat as you please "
+        "by taking chat history into consideration."
+    ),
     "tama_action_log": [],
     "tama_inventory_initialized": False,
     "tama_inventory_defaults_version": 5,

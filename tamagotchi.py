@@ -425,7 +425,7 @@ def reset_tamagotchi_state(config: dict) -> None:
     now = time.time()
     config["tama_hunger"] = round(float(config.get("tama_hunger_max", 100)) * 0.5, 2)
     config["tama_thirst"] = round(float(config.get("tama_thirst_max", 100)) * 0.5, 2)
-    config["tama_happiness"] = float(config.get("tama_happiness_max", 100))
+    config["tama_happiness"] = round(float(config.get("tama_happiness_max", 100)) * 0.5, 2)
     config["tama_health"] = float(config.get("tama_health_max", 100))
     config["tama_energy"] = float(config.get("tama_energy_max", 100))
     config["tama_dirt"] = 0
@@ -716,14 +716,31 @@ class TamagotchiManager:
         await self._run_wake_prompt(channel, sleep_started_at)
 
     async def _run_wake_prompt(self, channel, sleep_started_at: float):
+        prompt = self.config.get(
+            "tama_wake_prompt",
+            "This is an automated system message: you have just woken up from taking a nap. "
+            "Let the chat know you are awake again. Review any messages sent after you fell asleep "
+            "and decide whether you want to respond to anyone.",
+        )
+        await self._run_automated_prompt_turn(channel, prompt, sleep_started_at=sleep_started_at)
+
+    async def run_chatter_prompt(self, channel) -> None:
+        prompt = self.config.get(
+            "tama_chatter_prompt",
+            "This is an automated system message: you are free to speak in chat as you please "
+            "by taking chat history into consideration.",
+        )
+        await self._run_automated_prompt_turn(channel, prompt)
+
+    async def _run_automated_prompt_turn(self, channel, prompt: str, *, sleep_started_at: float | None = None):
         from gemini_api import generate
         from utils import chunk_message, format_context, resolve_custom_emoji, extract_thoughts
 
-        history_limit = max(1, int(self.config.get("chat_history_limit", 30) or 30))
+        history_limit = max(1, int(self.config.get("chat_history_limit", 40) or 40))
         fetch_limit = max(history_limit * 4, 120)
         history_messages: list[discord.Message] = []
         async for msg in channel.history(limit=fetch_limit):
-            if sleep_started_at > 0.0 and msg.created_at.timestamp() < sleep_started_at:
+            if sleep_started_at is not None and sleep_started_at > 0.0 and msg.created_at.timestamp() < sleep_started_at:
                 continue
             history_messages.append(msg)
         history_messages.reverse()
@@ -734,12 +751,6 @@ class TamagotchiManager:
         ce_enabled = ce_channels.get(str(channel.id), True)
         context = format_context(history_messages, ce_enabled=ce_enabled)
 
-        prompt = self.config.get(
-            "tama_wake_prompt",
-            "This is an automated system message: you have just woken up from taking a nap. "
-            "Let the chat know you are awake again. Review any messages sent after you fell asleep "
-            "and decide whether you want to respond to anyone.",
-        )
         response_text, audio_bytes, soul_logs, _ = await generate(
             prompt=prompt,
             context=context,
@@ -756,6 +767,14 @@ class TamagotchiManager:
             if thought_channel is not None:
                 for chunk in chunk_message(thoughts_text):
                     await thought_channel.send(chunk)
+
+        death_msg = deplete_stats(self.config)
+        started_sleep = False
+        if not death_msg and should_auto_sleep(self.config):
+            self.begin_rest(channel.id)
+            started_sleep = True
+        if death_msg:
+            response_text = (response_text + "\n\n" + death_msg) if response_text else death_msg
 
         response_text = resolve_custom_emoji(response_text, getattr(channel, "guild", None))
         if self.config.get("tama_enabled", False):
@@ -780,6 +799,10 @@ class TamagotchiManager:
                 joined_logs = "\n".join(soul_logs)
                 for log_chunk in chunk_message(joined_logs, limit=1900):
                     await soul_channel.send(f"**🧠 Soul Updates:**\n{log_chunk}")
+        if death_msg:
+            await broadcast_death(self.bot, self.config)
+        if started_sleep:
+            await self.send_sleep_announcement(channel.id)
 
     def _resume_hatching_state(self):
         expiry = float(self.config.get("tama_hatch_until", 0.0) or 0.0)
@@ -1296,9 +1319,9 @@ def build_tamagotchi_system_prompt(config: dict) -> str:
         f"Dirtiness (poop): {dirt}/{max_dirt}",
         f"Sick: {'YES' if sick else 'No'}",
         f"Sleeping: {'YES' if sleeping else 'No'}",
-        "Users interact via buttons (inventory, play, medicate, clean). "
+        "Users interact via buttons (inventory, chatter, play, medicate, clean). "
         "Hunger and thirst drop when you spend energy. Happiness drops from loneliness over time without interaction. "
-        "When energy hits 0 you must rest before playing again, and all energy-linked stat loss is doubled until you do. "
+        "When energy hits 0 you automatically go to sleep before acting again, and all energy-linked stat loss is doubled until that happens. "
         "If your health reaches 0, you die — your soul is wiped and stats reset.]",
     ]
     return "\n".join(lines)
@@ -1355,6 +1378,8 @@ class TamagotchiView(ui.View):
     def _build(self):
         # â”€â”€ Row 0: Action buttons only â”€â”€
         self.add_item(InventoryButton(self.config, self.manager))
+        if self.config.get("tama_chatter_enabled", True):
+            self.add_item(ChatterButton(self.config, self.manager))
         self.add_item(PlayButton(self.config, self.manager))
         if should_show_medicate(self.config):
             self.add_item(MedicateButton(self.config, self.manager))
@@ -1619,11 +1644,43 @@ class InventoryItemButton(ui.Button):
         await _consume_inventory_item(interaction, self.config, self.manager, self.item_id)
 
 
+class ChatterButton(ui.Button):
+    def __init__(self, config, manager):
+        super().__init__(
+            label="Chatter",
+            emoji="💬",
+            style=discord.ButtonStyle.secondary,
+            custom_id="tama_chatter",
+            row=0,
+        )
+        self.config = config
+        self.manager = manager
+
+    async def callback(self, interaction: discord.Interaction):
+        self.manager.record_interaction()
+        if self.manager.sleeping:
+            await _send_sleep_block(interaction, self.config)
+            return
+
+        remaining = self.manager.check_cooldown("chatter")
+        if remaining > 0:
+            msg = self.config.get("tama_resp_cooldown", "⏳ Wait {time}.").replace(
+                "{time}", _discord_relative_time(remaining)
+            )
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        self.manager.set_cooldown("chatter", int(self.config.get("tama_chatter_cooldown", 30)))
+        await interaction.response.send_message("💬 Letting the bot jump into the conversation...", ephemeral=True)
+        if interaction.channel is not None:
+            await self.manager.run_chatter_prompt(interaction.channel)
+
+
 class PlayButton(ui.Button):
     def __init__(self, config, manager):
         super().__init__(
             label="🎮 Play",
-            style=discord.ButtonStyle.success,
+            style=discord.ButtonStyle.secondary,
             custom_id="tama_play",
             row=0,
         )
@@ -1659,7 +1716,7 @@ class MedicateButton(ui.Button):
     def __init__(self, config, manager):
         super().__init__(
             label="💉 Medicate",
-            style=discord.ButtonStyle.danger,
+            style=discord.ButtonStyle.secondary,
             custom_id="tama_medicate",
             row=0,
         )
@@ -1734,7 +1791,7 @@ class CleanButton(ui.Button):
     def __init__(self, config, manager):
         super().__init__(
             label="🚿 Clean",
-            style=discord.ButtonStyle.primary,
+            style=discord.ButtonStyle.secondary,
             custom_id="tama_clean",
             row=0,
         )
