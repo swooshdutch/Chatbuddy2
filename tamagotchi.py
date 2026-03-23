@@ -330,6 +330,10 @@ def build_sleeping_message(config: dict) -> str:
     return template.replace("{time}", _discord_relative_time(sleeping_remaining(config)))
 
 
+def build_awake_message(config: dict) -> str:
+    return "✨ I'm awake again!"
+
+
 def is_hatching(config: dict) -> bool:
     hatch_until = float(config.get("tama_hatch_until", 0.0) or 0.0)
     return bool(config.get("tama_hatching", False)) and hatch_until > time.time()
@@ -621,11 +625,13 @@ class TamagotchiManager:
             self._sleep_task.cancel()
         self._sleep_task = asyncio.create_task(self._sleep_countdown(self.sleep_remaining))
 
-    def begin_rest(self):
+    def begin_rest(self, channel_id: int | str | None = None):
         duration = max(1, int(self.config.get("tama_rest_duration", 300)))
         self._sleep_expiry = time.time() + duration
         self.config["tama_sleeping"] = True
         self.config["tama_sleep_until"] = self._sleep_expiry
+        self.config["tama_sleep_channel_id"] = str(channel_id or "")
+        self.config["tama_sleep_message_id"] = ""
         save_config(self.config)
         if self._sleep_task and not self._sleep_task.done():
             self._sleep_task.cancel()
@@ -636,6 +642,8 @@ class TamagotchiManager:
         self.config["tama_sleeping"] = False
         self.config["tama_sleep_until"] = 0.0
         self.config["tama_energy"] = float(self.config.get("tama_energy_max", 100))
+        self.config["tama_sleep_channel_id"] = ""
+        self.config["tama_sleep_message_id"] = ""
         save_config(self.config)
 
     async def _sleep_countdown(self, duration: float):
@@ -643,7 +651,30 @@ class TamagotchiManager:
             await asyncio.sleep(duration)
         except asyncio.CancelledError:
             return
+        channel_id = self.config.get("tama_sleep_channel_id")
+        message_id = self.config.get("tama_sleep_message_id")
         self.finish_rest()
+        await self._announce_rest_complete(channel_id, message_id)
+
+    async def _announce_rest_complete(self, channel_id: int | str | None, message_id: int | str | None):
+        channel = await self._resolve_channel(channel_id)
+        if channel is None:
+            return
+
+        message_id = str(message_id or "").strip()
+        awake_text = append_tamagotchi_footer(build_awake_message(self.config), self.config, self)
+        awake_view = TamagotchiView(self.config, self)
+        if message_id:
+            try:
+                message = await channel.fetch_message(int(message_id))
+                await message.edit(content=awake_text, view=awake_view)
+                return
+            except Exception:
+                pass
+        try:
+            await channel.send(awake_text, view=awake_view)
+        except Exception:
+            return
 
     def _resume_hatching_state(self):
         expiry = float(self.config.get("tama_hatch_until", 0.0) or 0.0)
@@ -1224,7 +1255,7 @@ class TamagotchiView(ui.View):
             self.add_item(MedicateButton(self.config, self.manager))
         if int(self.config.get("tama_dirt", 0) or 0) > 0:
             self.add_item(CleanButton(self.config, self.manager))
-        if energy < 1:
+        if energy < 10:
             self.add_item(RestButton(self.config, self.manager))
 
 
@@ -1670,7 +1701,7 @@ class RestButton(ui.Button):
             await _send_sleep_block(interaction, self.config)
             return
 
-        self.manager.begin_rest()
+        self.manager.begin_rest(interaction.channel_id)
         self.manager.set_cooldown("rest", self.config.get("tama_cd_rest", 60))
         msg = self.config.get("tama_resp_rest", "💤 Tucking in for a recharge. See you soon!")
         msg += f"\n⏳ {_discord_relative_time(self.manager.sleep_remaining)}"
@@ -1678,6 +1709,12 @@ class RestButton(ui.Button):
             append_tamagotchi_footer(msg, self.config, self.manager),
             view=TamagotchiView(self.config, self.manager),
         )
+        try:
+            response_message = await interaction.original_response()
+            self.config["tama_sleep_message_id"] = str(response_message.id)
+            save_config(self.config)
+        except Exception:
+            pass
 
 
 class GameSelectView(ui.View):

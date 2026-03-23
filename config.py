@@ -113,6 +113,8 @@ DEFAULTS = {
     "tama_cd_rest": 60,
     "tama_sleeping": False,
     "tama_sleep_until": 0.0,
+    "tama_sleep_channel_id": "",
+    "tama_sleep_message_id": "",
     "tama_hatching": False,
     "tama_hatch_until": 0.0,
     "tama_hatch_channel_id": "",

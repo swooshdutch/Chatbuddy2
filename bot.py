@@ -359,11 +359,6 @@ async def _generate_and_respond(message: discord.Message):
     if bot_config.get("tama_enabled", False) and tama_manager:
         tama_manager.record_interaction()
     if bot_config.get("tama_enabled", False) and is_sleeping(bot_config):
-        await message.reply(
-            append_tamagotchi_footer(build_sleeping_message(bot_config), bot_config, tama_manager),
-            mention_author=False,
-            view=_build_tama_view(),
-        )
         return
 
     async with message.channel.typing():
@@ -508,10 +503,6 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
     if bot_config.get("tama_enabled", False) and tama_manager:
         tama_manager.record_interaction()
     if bot_config.get("tama_enabled", False) and is_sleeping(bot_config):
-        await channel.send(
-            append_tamagotchi_footer(build_sleeping_message(bot_config), bot_config, tama_manager),
-            view=_build_tama_view(),
-        )
         return
 
     async with channel.typing():
