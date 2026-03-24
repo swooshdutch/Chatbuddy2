@@ -26,6 +26,7 @@ Copy `.env.template` to `.env` in the project root:
 DISCORD_TOKEN=your_discord_bot_token_here
 API_KEY=your_gemini_api_key_here
 GEMINI_ENDPOINT=gemini-2.5-flash
+GEMMA_ENDPOINT=
 AUDIO_ENDPOINT=your_tts_endpoint_here
 MAIN_CHAT_CHANNEL=123456789012345678
 THOUGHTS_CHANNEL=123456789012345678
@@ -53,10 +54,11 @@ Bot-management commands are restricted to `BOT_OWNER_ID` plus any extra IDs you 
 ### Recommended first-run setup
 
 1. Start the bot.
-2. Run `/setup-bot`.
+2. Run `/setup-bot` or `/setup-bot-gemma`.
 3. Mention the bot or reply to one of its messages in an allowed channel.
 
-`/setup-bot` reads the backend environment variables above and configures:
+`/setup-bot` reads the backend environment variables above and configures Gemini mode.
+`/setup-bot-gemma` does the same thing, but uses `GEMMA_ENDPOINT` and switches the bot to Gemma mode.
 
 - API key and Gemini endpoint
 - Audio endpoint
@@ -82,6 +84,7 @@ All bot-management commands are owner-gated through `BOT_OWNER_ID` and the `/set
 | Command | Description |
 |---|---|
 | `/setup-bot` | Populate live bot config from backend environment variables |
+| `/setup-bot-gemma` | Populate live bot config from backend environment variables in Gemma mode |
 | `/set-command-user` | Add or remove a user ID allowed to use bot commands |
 | `/set-api-key` | Store the Gemini API key in `.env` |
 | `/set-api-context` | Enable internal daily LLM API quota tracking logic |
@@ -260,7 +263,7 @@ The Tamagotchi system is fully script-driven. The LLM is informed of current sta
 #### Tamagotchi Behavior
 
 1. Enable it with `/set-tama-mode true` or `/set-tamagotchi-mode true`.
-2. `setup-bot` starts a fresh egg hatch in the main chat channel, and `/reset-tama-stats` does the same when Tamagotchi mode is enabled.
+2. `/setup-bot` and `/setup-bot-gemma` both start a fresh egg hatch in the main chat channel, and `/reset-tama-stats` does the same when Tamagotchi mode is enabled.
 3. While the egg is hatching, users cannot chat with the bot. The egg message shows a live countdown, and when it reaches zero the bot receives a hidden configurable hatch prompt and sends its first public message.
 4. A newly hatched bot starts with hunger, thirst, and happiness at 50% of their configured max values, while health and energy start full.
 5. Public bot messages use the compact quoted stat footer as the visible stat display. Happiness uses a dynamic emoji based on its current percent, and a skull icon appears whenever the bot is sick.

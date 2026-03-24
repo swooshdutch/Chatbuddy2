@@ -60,6 +60,7 @@ load_environment()
 TOKEN = os.getenv("DISCORD_TOKEN")
 SETUP_API_KEY = os.getenv("API_KEY", "")
 SETUP_GEMINI_ENDPOINT = os.getenv("GEMINI_ENDPOINT", "")
+SETUP_GEMMA_ENDPOINT = os.getenv("GEMMA_ENDPOINT", "")
 SETUP_AUDIO_ENDPOINT = os.getenv("AUDIO_ENDPOINT", "")
 SETUP_MAIN_CHAT_CHANNEL = os.getenv("MAIN_CHAT_CHANNEL", "")
 SETUP_THOUGHTS_CHANNEL = os.getenv("THOUGHTS_CHANNEL", "")
@@ -218,6 +219,98 @@ async def _run_tama_fresh_start(
         send_ce=True,
         fallback_channel_ids=fallback_channel_ids,
     )
+
+
+async def _run_backend_setup(
+    interaction: discord.Interaction,
+    *,
+    model_mode: str,
+    endpoint_env_name: str,
+    endpoint_value: str,
+) -> None:
+    missing = []
+    if not SETUP_API_KEY:
+        missing.append("API_KEY")
+    if not endpoint_value:
+        missing.append(endpoint_env_name)
+    if not SETUP_MAIN_CHAT_CHANNEL:
+        missing.append("MAIN_CHAT_CHANNEL")
+    if not _configured_owner_id():
+        missing.append("BOT_OWNER_ID")
+
+    if missing:
+        await interaction.response.send_message(
+            f"Missing setup env vars: {', '.join(missing)}",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    try:
+        allowed_channels = dict(bot_config.get("allowed_channels", {}))
+        allowed_channels[str(SETUP_MAIN_CHAT_CHANNEL)] = True
+        ce_channels = dict(bot_config.get("ce_channels", {}))
+        ce_channels[str(SETUP_MAIN_CHAT_CHANNEL)] = True
+
+        set_secret("api_key", SETUP_API_KEY)
+        bot_config["model_mode"] = model_mode
+        bot_config["model_endpoint"] = endpoint_value
+        if model_mode == "gemma":
+            bot_config["model_endpoint_gemma"] = endpoint_value
+        else:
+            bot_config["model_endpoint_gemini"] = endpoint_value
+        bot_config["audio_endpoint"] = SETUP_AUDIO_ENDPOINT
+        bot_config["audio_enabled"] = bool(SETUP_AUDIO_ENDPOINT)
+        bot_config["multimodal_enabled"] = True
+        bot_config["duck_search_enabled"] = True
+        bot_config["system_prompt"] = SETUP_SYS_INSTRUCT or bot_config.get("system_prompt", "")
+        bot_config["allowed_channels"] = allowed_channels
+        bot_config["ce_channels"] = ce_channels
+        bot_config["soc_channel_id"] = str(SETUP_THOUGHTS_CHANNEL) if SETUP_THOUGHTS_CHANNEL else None
+        bot_config["soc_enabled"] = bool(SETUP_THOUGHTS_CHANNEL)
+        bot_config["soc_context_enabled"] = bool(SETUP_THOUGHTS_CHANNEL)
+        bot_config["soul_channel_id"] = str(SETUP_SOUL_CHANNEL) if SETUP_SOUL_CHANNEL else ""
+        bot_config["soul_channel_enabled"] = bool(SETUP_SOUL_CHANNEL)
+        bot_config["soul_enabled"] = True
+        bot_config["soul_limit"] = 10000
+        bot_config["tama_enabled"] = True
+        bot_config["heartbeat_enabled"] = False
+        bot_config["auto_chat_enabled"] = False
+        bot_config["bot_owner_id"] = _configured_owner_id()
+        bot_config["reminders_channel_id"] = str(SETUP_MAIN_CHAT_CHANNEL)
+        bot_config["main_chat_channel_id"] = str(SETUP_MAIN_CHAT_CHANNEL)
+
+        save_config(bot_config)
+        _restart_background_managers()
+        fresh_start = await _run_tama_fresh_start(
+            channel_id=SETUP_MAIN_CHAT_CHANNEL,
+            fallback_channel_ids=[interaction.channel_id],
+        )
+        if not fresh_start.get("hatch_message_posted"):
+            raise RuntimeError(
+                "Fresh start did not post a hatch message. "
+                f"Target channel: {fresh_start.get('hatch_channel_id') or '(missing)'}. "
+                f"Reason: {fresh_start.get('hatch_failure_reason') or 'unknown'}"
+            )
+
+        hatch_channel_id = str(fresh_start.get("hatch_channel_id") or "").strip()
+        used_fallback_channel = bool(interaction.channel_id) and hatch_channel_id == str(interaction.channel_id)
+        mode_label = "Gemma" if model_mode == "gemma" else "Gemini"
+        await interaction.followup.send(
+            f"Setup complete. Backend settings were applied in **{mode_label}** mode, the soul was wiped, `[ce]` was sent, "
+            + (
+                "and a new egg is now hatching in this channel because the configured main channel could not be used."
+                if used_fallback_channel and hatch_channel_id != str(SETUP_MAIN_CHAT_CHANNEL)
+                else "and a new egg is now hatching."
+            ),
+            ephemeral=True,
+        )
+    except Exception as e:
+        print(f"[ChatBuddy] /setup-bot failed: {e}")
+        await interaction.followup.send(
+            f"Setup failed: `{type(e).__name__}: {e}`",
+            ephemeral=True,
+        )
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -1476,85 +1569,25 @@ async def setup_bot(interaction: discord.Interaction):
     if not _is_owner_user(interaction.user.id):
         await _deny_command(interaction)
         return
+    await _run_backend_setup(
+        interaction,
+        model_mode="gemini",
+        endpoint_env_name="GEMINI_ENDPOINT",
+        endpoint_value=SETUP_GEMINI_ENDPOINT,
+    )
 
-    missing = []
-    if not SETUP_API_KEY:
-        missing.append("API_KEY")
-    if not SETUP_GEMINI_ENDPOINT:
-        missing.append("GEMINI_ENDPOINT")
-    if not SETUP_MAIN_CHAT_CHANNEL:
-        missing.append("MAIN_CHAT_CHANNEL")
-    if not _configured_owner_id():
-        missing.append("BOT_OWNER_ID")
 
-    if missing:
-        await interaction.response.send_message(
-            f"Missing setup env vars: {', '.join(missing)}",
-            ephemeral=True,
-        )
+@bot.tree.command(name="setup-bot-gemma", description="Populate the bot config from backend environment variables in Gemma mode")
+async def setup_bot_gemma(interaction: discord.Interaction):
+    if not _is_owner_user(interaction.user.id):
+        await _deny_command(interaction)
         return
-
-    await interaction.response.defer(ephemeral=True)
-    try:
-        allowed_channels = dict(bot_config.get("allowed_channels", {}))
-        allowed_channels[str(SETUP_MAIN_CHAT_CHANNEL)] = True
-        ce_channels = dict(bot_config.get("ce_channels", {}))
-        ce_channels[str(SETUP_MAIN_CHAT_CHANNEL)] = True
-
-        set_secret("api_key", SETUP_API_KEY)
-        bot_config["model_mode"] = "gemini"
-        bot_config["model_endpoint_gemini"] = SETUP_GEMINI_ENDPOINT
-        bot_config["audio_endpoint"] = SETUP_AUDIO_ENDPOINT
-        bot_config["audio_enabled"] = bool(SETUP_AUDIO_ENDPOINT)
-        bot_config["multimodal_enabled"] = True
-        bot_config["duck_search_enabled"] = True
-        bot_config["system_prompt"] = SETUP_SYS_INSTRUCT or bot_config.get("system_prompt", "")
-        bot_config["allowed_channels"] = allowed_channels
-        bot_config["ce_channels"] = ce_channels
-        bot_config["soc_channel_id"] = str(SETUP_THOUGHTS_CHANNEL) if SETUP_THOUGHTS_CHANNEL else None
-        bot_config["soc_enabled"] = bool(SETUP_THOUGHTS_CHANNEL)
-        bot_config["soc_context_enabled"] = bool(SETUP_THOUGHTS_CHANNEL)
-        bot_config["soul_channel_id"] = str(SETUP_SOUL_CHANNEL) if SETUP_SOUL_CHANNEL else ""
-        bot_config["soul_channel_enabled"] = bool(SETUP_SOUL_CHANNEL)
-        bot_config["soul_enabled"] = True
-        bot_config["soul_limit"] = 10000
-        bot_config["tama_enabled"] = True
-        bot_config["heartbeat_enabled"] = False
-        bot_config["auto_chat_enabled"] = False
-        bot_config["bot_owner_id"] = _configured_owner_id()
-        bot_config["reminders_channel_id"] = str(SETUP_MAIN_CHAT_CHANNEL)
-        bot_config["main_chat_channel_id"] = str(SETUP_MAIN_CHAT_CHANNEL)
-
-        save_config(bot_config)
-        _restart_background_managers()
-        fresh_start = await _run_tama_fresh_start(
-            channel_id=SETUP_MAIN_CHAT_CHANNEL,
-            fallback_channel_ids=[interaction.channel_id],
-        )
-        if not fresh_start.get("hatch_message_posted"):
-            raise RuntimeError(
-                "Fresh start did not post a hatch message. "
-                f"Target channel: {fresh_start.get('hatch_channel_id') or '(missing)'}. "
-                f"Reason: {fresh_start.get('hatch_failure_reason') or 'unknown'}"
-            )
-
-        hatch_channel_id = str(fresh_start.get("hatch_channel_id") or "").strip()
-        used_fallback_channel = bool(interaction.channel_id) and hatch_channel_id == str(interaction.channel_id)
-        await interaction.followup.send(
-            "Setup complete. Backend settings were applied, the soul was wiped, `[ce]` was sent, "
-            + (
-                "and a new egg is now hatching in this channel because the configured main channel could not be used."
-                if used_fallback_channel and hatch_channel_id != str(SETUP_MAIN_CHAT_CHANNEL)
-                else "and a new egg is now hatching."
-            ),
-            ephemeral=True,
-        )
-    except Exception as e:
-        print(f"[ChatBuddy] /setup-bot failed: {e}")
-        await interaction.followup.send(
-            f"Setup failed: `{type(e).__name__}: {e}`",
-            ephemeral=True,
-        )
+    await _run_backend_setup(
+        interaction,
+        model_mode="gemma",
+        endpoint_env_name="GEMMA_ENDPOINT",
+        endpoint_value=SETUP_GEMMA_ENDPOINT,
+    )
 
 
 @bot.tree.command(name="set-command-user", description="Add or remove a user ID that can use bot commands")
@@ -2570,6 +2603,7 @@ async def help_command(interaction: discord.Interaction):
         name="Core Settings",
         value=(
             "`/setup-bot` - Load config from backend environment variables\n"
+            "`/setup-bot-gemma` - Load config from backend environment variables in Gemma mode\n"
             "`/set-command-user` - Add or remove a user ID allowed to manage the bot\n"
             "`/set-api-key` - Set the Gemini API key\n"
             "`/set-api-context` - Track daily API quota in system prompt\n"
