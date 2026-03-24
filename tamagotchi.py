@@ -644,6 +644,12 @@ class TamagotchiManager:
                 channel = None
         return channel
 
+    @staticmethod
+    def _channel_type_name(channel) -> str:
+        if channel is None:
+            return "unknown"
+        return type(channel).__name__
+
     async def _send_ce_to_primary_channels(self) -> set[int]:
         channel_ids: set[int] = set()
         main_channel_id = self._resolve_main_channel_id()
@@ -675,6 +681,7 @@ class TamagotchiManager:
         wipe_soul: bool,
         reset_stats: bool,
         send_ce: bool,
+        fallback_channel_ids: list[int | str] | tuple[int | str, ...] | None = None,
     ) -> dict:
         result = {
             "soul_wiped": False,
@@ -682,6 +689,8 @@ class TamagotchiManager:
             "ce_channel_ids": [],
             "hatch_channel_id": "",
             "hatch_message_posted": False,
+            "hatch_attempted_channel_ids": [],
+            "hatch_failure_reason": "",
         }
         if self._hatch_task and not self._hatch_task.done():
             self._hatch_task.cancel()
@@ -700,7 +709,14 @@ class TamagotchiManager:
             result["stats_reset"] = True
 
         hatch_channel_id = self._resolve_main_channel_id(channel_id)
+        candidate_channel_ids: list[str] = []
+        for raw_channel_id in [hatch_channel_id, *(fallback_channel_ids or [])]:
+            normalized_channel_id = str(raw_channel_id or "").strip()
+            if normalized_channel_id and normalized_channel_id not in candidate_channel_ids:
+                candidate_channel_ids.append(normalized_channel_id)
+
         result["hatch_channel_id"] = hatch_channel_id
+        result["hatch_attempted_channel_ids"] = list(candidate_channel_ids)
         duration = max(1, int(self.config.get("tama_egg_hatch_time", 30)))
         self._hatch_expiry = time.time() + duration
         self.config["tama_hatching"] = True
@@ -713,15 +729,34 @@ class TamagotchiManager:
             ce_ids = await self._send_ce_to_primary_channels()
             result["ce_channel_ids"] = sorted(ce_ids)
 
-        channel = await self._resolve_channel(hatch_channel_id)
-        if channel is not None:
+        if not candidate_channel_ids:
+            result["hatch_failure_reason"] = "No hatch channel was configured or supplied."
+
+        for candidate_channel_id in candidate_channel_ids:
+            channel = await self._resolve_channel(candidate_channel_id)
+            if channel is None:
+                result["hatch_failure_reason"] = (
+                    f"Channel {candidate_channel_id} was not found or is not accessible to the bot."
+                )
+                continue
+            if not hasattr(channel, "send"):
+                result["hatch_failure_reason"] = (
+                    f"Channel {candidate_channel_id} resolved to unsupported type "
+                    f"{self._channel_type_name(channel)}."
+                )
+                continue
             try:
                 msg = await channel.send(build_hatching_message(self.config))
+                self.config["tama_hatch_channel_id"] = str(candidate_channel_id)
                 self.config["tama_hatch_message_id"] = str(msg.id)
                 save_config(self.config)
+                result["hatch_channel_id"] = str(candidate_channel_id)
                 result["hatch_message_posted"] = True
+                result["hatch_failure_reason"] = ""
+                break
             except Exception as e:
-                print(f"[Tamagotchi] Failed to post hatch message in channel {hatch_channel_id}: {e}")
+                result["hatch_failure_reason"] = f"Channel {candidate_channel_id} rejected the hatch message: {e}"
+                print(f"[Tamagotchi] Failed to post hatch message in channel {candidate_channel_id}: {e}")
 
         if self._hatch_task and not self._hatch_task.done():
             self._hatch_task.cancel()

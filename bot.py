@@ -198,13 +198,18 @@ def _ensure_tama_manager() -> TamagotchiManager:
     return tama_manager
 
 
-async def _run_tama_fresh_start(channel_id: int | str | None = None) -> dict:
+async def _run_tama_fresh_start(
+    channel_id: int | str | None = None,
+    *,
+    fallback_channel_ids: list[int | str] | tuple[int | str, ...] | None = None,
+) -> dict:
     manager = _ensure_tama_manager()
     return await manager.start_egg_cycle(
         channel_id=channel_id,
         wipe_soul=True,
         reset_stats=True,
         send_ce=True,
+        fallback_channel_ids=fallback_channel_ids,
     )
 
 @bot.command()
@@ -1515,15 +1520,26 @@ async def setup_bot(interaction: discord.Interaction):
 
         save_config(bot_config)
         _restart_background_managers()
-        fresh_start = await _run_tama_fresh_start(channel_id=SETUP_MAIN_CHAT_CHANNEL)
+        fresh_start = await _run_tama_fresh_start(
+            channel_id=SETUP_MAIN_CHAT_CHANNEL,
+            fallback_channel_ids=[interaction.channel_id],
+        )
         if not fresh_start.get("hatch_message_posted"):
             raise RuntimeError(
                 "Fresh start did not post a hatch message. "
-                f"Target channel: {fresh_start.get('hatch_channel_id') or '(missing)'}"
+                f"Target channel: {fresh_start.get('hatch_channel_id') or '(missing)'}. "
+                f"Reason: {fresh_start.get('hatch_failure_reason') or 'unknown'}"
             )
 
+        hatch_channel_id = str(fresh_start.get("hatch_channel_id") or "").strip()
+        used_fallback_channel = bool(interaction.channel_id) and hatch_channel_id == str(interaction.channel_id)
         await interaction.followup.send(
-            "Setup complete. Backend settings were applied, the soul was wiped, `[ce]` was sent, and a new egg is now hatching.",
+            "Setup complete. Backend settings were applied, the soul was wiped, `[ce]` was sent, "
+            + (
+                "and a new egg is now hatching in this channel because the configured main channel could not be used."
+                if used_fallback_channel and hatch_channel_id != str(SETUP_MAIN_CHAT_CHANNEL)
+                else "and a new egg is now hatching."
+            ),
             ephemeral=True,
         )
     except Exception as e:
@@ -2402,11 +2418,14 @@ async def dev_set_stats(
 async def reset_tama_stats(interaction: discord.Interaction):
     if bot_config.get("tama_enabled", False):
         await interaction.response.defer(ephemeral=True)
-        fresh_start = await _run_tama_fresh_start()
+        fresh_start = await _run_tama_fresh_start(
+            fallback_channel_ids=[interaction.channel_id],
+        )
         if not fresh_start.get("hatch_message_posted"):
             raise RuntimeError(
                 "Fresh start did not post a hatch message. "
-                f"Target channel: {fresh_start.get('hatch_channel_id') or '(missing)'}"
+                f"Target channel: {fresh_start.get('hatch_channel_id') or '(missing)'}. "
+                f"Reason: {fresh_start.get('hatch_failure_reason') or 'unknown'}"
             )
         await interaction.followup.send(
             "✅ Tamagotchi reset complete. Soul wiped, `[ce]` sent to the main chat and thoughts channels, and a new egg is hatching.",
