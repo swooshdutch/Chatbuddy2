@@ -174,7 +174,7 @@ DEFAULTS = {
     "tama_medicate_happiness_cost": 3.0,
     # Button cooldowns (seconds, global)
     "tama_cd_feed": 60,
-    "tama_cd_drink": 60,
+    "tama_cd_drink": 30,
     "tama_cd_other": 60,
     "tama_cd_play": 60,
     "tama_cd_medicate": 60,
@@ -299,6 +299,14 @@ def _migrate_tamagotchi_default_tuning(config: dict, stored: dict | None = None)
         stored_thirst = None
     if stored_thirst == 1.0:
         config["tama_thirst_depletion"] = 2.0
+        changed = True
+
+    try:
+        stored_drink_cd = int(stored.get("tama_cd_drink", 0) or 0)
+    except (TypeError, ValueError):
+        stored_drink_cd = None
+    if stored_drink_cd == 60:
+        config["tama_cd_drink"] = 30
         changed = True
 
     return changed
