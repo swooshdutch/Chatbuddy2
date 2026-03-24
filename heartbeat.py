@@ -22,6 +22,7 @@ from utils import (
     collect_context_entries,
 )
 from tamagotchi import TamagotchiView, append_tamagotchi_footer, is_sleeping, is_hatching
+from bot_helpers import read_soc_context
 
 
 class HeartbeatManager:
@@ -31,6 +32,7 @@ class HeartbeatManager:
         self.bot = bot
         self.config = config
         self._task: tasks.Loop | None = None
+        self._last_non_bot_message_id: int | None = None
 
     # ── lifecycle ──────────────────────────────────────────────────────
 
@@ -81,57 +83,49 @@ class HeartbeatManager:
 
         try:
             from gemini_api import generate  # lazy to avoid circular import
-            tama_manager = getattr(self.bot, "tama_manager", None)
-            last_msg = None
-            async for msg in channel.history(limit=1):
-                last_msg = msg
-            if (
-                self.config.get("tama_enabled", False)
-                and tama_manager
-                and last_msg is not None
-                and last_msg.author != self.bot.user
-            ):
-                tama_manager.record_interaction()
-
-            # Gather recent channel context
             history_limit = self.config.get("chat_history_limit", 30)
             history_messages = await collect_context_entries(
                 channel,
                 history_limit,
                 config=self.config,
             )
+            tama_manager = getattr(self.bot, "tama_manager", None)
+            latest_non_bot_message = next(
+                (msg for msg in reversed(history_messages) if msg.author != self.bot.user),
+                None,
+            )
+            has_new_user_activity = (
+                latest_non_bot_message is not None
+                and latest_non_bot_message.id != self._last_non_bot_message_id
+            )
+            if (
+                self.config.get("tama_enabled", False)
+                and tama_manager
+                and has_new_user_activity
+            ):
+                tama_manager.record_interaction()
+            if latest_non_bot_message is not None:
+                self._last_non_bot_message_id = latest_non_bot_message.id
 
             context = format_context(history_messages, ce_enabled=True)
-
-            # SoC context injection
-            soc_context_enabled = self.config.get("soc_context_enabled", False)
             soc_channel_id = self.config.get("soc_channel_id")
-            if soc_context_enabled and soc_channel_id:
-                soc_count = self.config.get("soc_context_count", 10)
-                soc_ch = self.bot.get_channel(int(soc_channel_id))
-                if soc_ch is not None:
-                    soc_msgs: list[discord.Message] = []
-                    async for m in soc_ch.history(limit=soc_count):
-                        soc_msgs.append(m)
-                    soc_msgs.reverse()
-                    ce_idx = None
-                    for i, m in enumerate(soc_msgs):
-                        if m.content.strip().lower() == "[ce]":
-                            ce_idx = i
-                    if ce_idx is not None:
-                        soc_msgs = soc_msgs[ce_idx + 1 :]
-                    if soc_msgs:
-                        soc_lines = []
-                        for m in soc_msgs:
-                            ts = m.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                            soc_lines.append(f"[{ts}] {m.content}")
-                        context += (
-                            "\n[YOUR PREVIOUS THOUGHTS]\n"
-                            + "\n".join(soc_lines)
-                            + "\n[END YOUR PREVIOUS THOUGHTS]\n"
-                        )
+            context += await read_soc_context(self.bot, self.config)
 
-            full_prompt = f"[HEARTBEAT]\n{prompt}"
+            heartbeat_meta = []
+            if latest_non_bot_message is None:
+                heartbeat_meta.append(
+                    "No non-bot messages are present in the recent channel context."
+                )
+            elif not has_new_user_activity:
+                heartbeat_meta.append(
+                    "No new user messages have appeared since the previous heartbeat. "
+                    "Treat repeated context as ongoing background, not as a new repeated event."
+                )
+
+            full_prompt = "[HEARTBEAT]\n"
+            if heartbeat_meta:
+                full_prompt += "[HEARTBEAT META]\n" + "\n".join(heartbeat_meta) + "\n\n"
+            full_prompt += prompt
 
             response_text, audio_bytes, soul_logs, reminder_cmds = await generate(
                 prompt=full_prompt,
@@ -177,12 +171,12 @@ class HeartbeatManager:
 
             # Send text response
             if response_text:
-                chunks = chunk_message(response_text)
                 tama_view = None
                 tama_manager = getattr(self.bot, "tama_manager", None)
                 if self.config.get("tama_enabled", False) and tama_manager:
                     tama_view = TamagotchiView(self.config, tama_manager)
                     response_text = append_tamagotchi_footer(response_text, self.config, tama_manager)
+                chunks = chunk_message(response_text)
                 for i, chunk in enumerate(chunks):
                     await channel.send(chunk, view=tama_view if i == len(chunks) - 1 else None)
 

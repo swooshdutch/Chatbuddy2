@@ -47,7 +47,7 @@ async def read_soc_context(bot_ref, config: dict) -> str:
         ts = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
         soc_lines.append(f"[{ts}] {message.content}")
     return (
-        "\n[YOUR PREVIOUS THOUGHTS]\n"
+        "\n[YOUR PREVIOUS THOUGHTS - internal notes from earlier turns. These are not new user messages and should not be counted as extra repeats of the same event. Use them only as background memory.]\n"
         + "\n".join(soc_lines)
         + "\n[END YOUR PREVIOUS THOUGHTS]\n"
     )

@@ -13,6 +13,7 @@ from config import save_config
 from gemini_api import generate, build_system_prompt
 from utils import format_context, chunk_message, resolve_custom_emoji, extract_thoughts, extract_reminder_commands, collect_context_entries
 from tamagotchi import TamagotchiView, append_tamagotchi_footer, is_sleeping, is_hatching
+from bot_helpers import read_soc_context
 
 
 class AutoChatManager:
@@ -141,35 +142,7 @@ class AutoChatManager:
                 ce_enabled = ce_channels.get(channel_key, True)
                 context = format_context(history_messages, ce_enabled=ce_enabled)
 
-                # SoC context injection
-                soc_context_enabled = self.config.get("soc_context_enabled", False)
-                soc_channel_id = self.config.get("soc_channel_id")
-                if soc_context_enabled and soc_channel_id:
-                    soc_count = self.config.get("soc_context_count", 10)
-                    soc_ch = self.bot.get_channel(int(soc_channel_id))
-                    if soc_ch is not None:
-                        soc_msgs = []
-                        async for m in soc_ch.history(limit=soc_count):
-                            soc_msgs.append(m)
-                        soc_msgs.reverse()
-                        # Apply [ce] to SoC context
-                        filtered_soc = []
-                        ce_idx = None
-                        for i, m in enumerate(soc_msgs):
-                            if m.content.strip().lower() == "[ce]":
-                                ce_idx = i
-                        if ce_idx is not None:
-                            soc_msgs = soc_msgs[ce_idx + 1:]
-                        if soc_msgs:
-                            soc_lines = []
-                            for m in soc_msgs:
-                                ts = m.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                                soc_lines.append(f"[{ts}] {m.content}")
-                            context += (
-                                "\n[YOUR PREVIOUS THOUGHTS]\n"
-                                + "\n".join(soc_lines)
-                                + "\n[END YOUR PREVIOUS THOUGHTS]\n"
-                            )
+                context += await read_soc_context(self.bot, self.config)
 
                 response_text, audio_bytes, soul_logs, reminder_cmds = await generate(
                     prompt=last_msg.clean_content or "(empty message)",

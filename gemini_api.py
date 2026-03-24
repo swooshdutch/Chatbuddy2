@@ -15,6 +15,7 @@ import os
 import aiohttp
 from datetime import datetime
 import datetime as dt_module
+from urllib.parse import urlparse
 
 from config import save_config
 from secret_store import get_secret
@@ -178,6 +179,14 @@ def _requires_search(prompt: str) -> bool:
     return False
 
 
+def _is_google_api_url(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    return host.endswith("generativelanguage.googleapis.com")
+
+
 # ── main entry point ──────────────────────────────────────────────────────────
 
 async def generate(
@@ -307,14 +316,20 @@ async def generate(
     # Build the request URL — custom endpoints may be full URLs
     if custom_mode and text_endpoint.startswith("http"):
         # Full external URL — append key as query param
-        sep = "&" if "?" in text_endpoint else "?"
-        text_url = f"{text_endpoint}{sep}key={effective_api_key}"
+        text_url = text_endpoint
+        headers: dict[str, str] = {}
+        if _is_google_api_url(text_endpoint):
+            headers["x-goog-api-key"] = effective_api_key
+        else:
+            sep = "&" if "?" in text_endpoint else "?"
+            text_url = f"{text_endpoint}{sep}key={effective_api_key}"
     else:
-        text_url = f"{API_BASE}/{text_endpoint}:generateContent?key={effective_api_key}"
+        headers = {"x-goog-api-key": effective_api_key}
+        text_url = f"{API_BASE}/{text_endpoint}:generateContent"
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(text_url, json=text_body) as resp:
+            async with session.post(text_url, json=text_body, headers=headers or None) as resp:
                 status = resp.status
                 data   = await resp.json()
 

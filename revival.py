@@ -14,6 +14,7 @@ from config import save_config
 from gemini_api import generate
 from utils import format_context, chunk_message, resolve_custom_emoji, extract_thoughts, extract_reminder_commands, collect_context_entries
 from tamagotchi import TamagotchiView, append_tamagotchi_footer, is_sleeping, is_hatching
+from bot_helpers import read_soc_context
 
 
 class RevivalManager:
@@ -105,33 +106,8 @@ class RevivalManager:
         context = format_context(history_messages, ce_enabled=True)
 
         # ── SoC context injection ─────────────────────────────────────
-        soc_context_enabled = self.config.get("soc_context_enabled", False)
         soc_channel_id = self.config.get("soc_channel_id")
-        if soc_context_enabled and soc_channel_id:
-            soc_count = self.config.get("soc_context_count", 10)
-            soc_ch = self.bot.get_channel(int(soc_channel_id))
-            if soc_ch is not None:
-                soc_msgs = []
-                async for m in soc_ch.history(limit=soc_count):
-                    soc_msgs.append(m)
-                soc_msgs.reverse()
-                # Apply [ce] cutoff to SoC context
-                ce_idx = None
-                for i, m in enumerate(soc_msgs):
-                    if m.content.strip().lower() == "[ce]":
-                        ce_idx = i
-                if ce_idx is not None:
-                    soc_msgs = soc_msgs[ce_idx + 1:]
-                if soc_msgs:
-                    soc_lines = []
-                    for m in soc_msgs:
-                        ts = m.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                        soc_lines.append(f"[{ts}] {m.content}")
-                    context += (
-                        "\n[YOUR PREVIOUS THOUGHTS]\n"
-                        + "\n".join(soc_lines)
-                        + "\n[END YOUR PREVIOUS THOUGHTS]\n"
-                    )
+        context += await read_soc_context(self.bot, self.config)
 
         # Generate the revival message
         tama_manager = getattr(self.bot, "tama_manager", None)
@@ -175,16 +151,17 @@ class RevivalManager:
             response_text = clean_text
 
             response_text = resolve_custom_emoji(response_text, channel.guild)
-            # Tamagotchi: append stats footer if there is visible text
-            footer = f"\n-# :loudspeaker: chat reviver active for : {active_minutes}m 0s"
-            chunks = chunk_message(response_text)
-            # Append the footer to the last chunk
-            chunks[-1] += footer
             tama_view = None
             tama_manager = getattr(self.bot, "tama_manager", None)
             if self.config.get("tama_enabled", False) and tama_manager:
                 tama_view = TamagotchiView(self.config, tama_manager)
                 response_text = append_tamagotchi_footer(response_text, self.config, tama_manager)
+            footer = f"\n-# :loudspeaker: chat reviver active for : {active_minutes}m 0s"
+            if response_text:
+                response_text = response_text.rstrip() + footer
+            else:
+                response_text = footer.lstrip("\n")
+            chunks = chunk_message(response_text)
             for i, chunk in enumerate(chunks):
                 await channel.send(chunk, view=tama_view if i == len(chunks) - 1 else None)
 
@@ -267,33 +244,8 @@ class RevivalManager:
                 context = format_context(history_messages, ce_enabled=True)
 
                 # ── SoC context injection ─────────────────────────────
-                soc_context_enabled = self.config.get("soc_context_enabled", False)
                 soc_channel_id = self.config.get("soc_channel_id")
-                if soc_context_enabled and soc_channel_id:
-                    soc_count = self.config.get("soc_context_count", 10)
-                    soc_ch = self.bot.get_channel(int(soc_channel_id))
-                    if soc_ch is not None:
-                        soc_msgs = []
-                        async for m in soc_ch.history(limit=soc_count):
-                            soc_msgs.append(m)
-                        soc_msgs.reverse()
-                        # Apply [ce] cutoff to SoC context
-                        ce_idx = None
-                        for i, m in enumerate(soc_msgs):
-                            if m.content.strip().lower() == "[ce]":
-                                ce_idx = i
-                        if ce_idx is not None:
-                            soc_msgs = soc_msgs[ce_idx + 1:]
-                        if soc_msgs:
-                            soc_lines = []
-                            for m in soc_msgs:
-                                ts = m.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                                soc_lines.append(f"[{ts}] {m.content}")
-                            context += (
-                                "\n[YOUR PREVIOUS THOUGHTS]\n"
-                                + "\n".join(soc_lines)
-                                + "\n[END YOUR PREVIOUS THOUGHTS]\n"
-                            )
+                context += await read_soc_context(self.bot, self.config)
 
                 user_text = last_msg.clean_content
                 if not user_text:
@@ -340,15 +292,17 @@ class RevivalManager:
                     response_text = clean_text
 
                     response_text = resolve_custom_emoji(response_text, channel.guild)
-                    # Tamagotchi: append stats footer if there is visible text
-                    footer = f"\n-# :loudspeaker: chat reviver active for : {remaining_m}m {remaining_s}s"
-                    chunks = chunk_message(response_text)
-                    chunks[-1] += footer
                     tama_view = None
                     tama_manager = getattr(self.bot, "tama_manager", None)
                     if self.config.get("tama_enabled", False) and tama_manager:
                         tama_view = TamagotchiView(self.config, tama_manager)
                         response_text = append_tamagotchi_footer(response_text, self.config, tama_manager)
+                    footer = f"\n-# :loudspeaker: chat reviver active for : {remaining_m}m {remaining_s}s"
+                    if response_text:
+                        response_text = response_text.rstrip() + footer
+                    else:
+                        response_text = footer.lstrip("\n")
+                    chunks = chunk_message(response_text)
                     for i, chunk in enumerate(chunks):
                         await channel.send(chunk, view=tama_view if i == len(chunks) - 1 else None)
 
