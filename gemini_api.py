@@ -39,6 +39,32 @@ MSG_GENERIC_ERROR = "⚠️ Something went wrong while generating a response. Pl
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+def _build_current_time_context() -> str:
+    """Return a compact local-time header for the top of the system prompt."""
+    now = datetime.now().astimezone()
+    tz_name = now.tzname() or "local"
+    utc_offset = now.strftime("%z")
+    if utc_offset:
+        utc_offset = f"UTC{utc_offset[:3]}:{utc_offset[3:]}"
+    else:
+        utc_offset = "UTC unknown"
+
+    return (
+        "[CURRENT TIME CONTEXT]\n"
+        f"Local datetime: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"Weekday: {now.strftime('%A')}\n"
+        f"Timezone: {tz_name} ({utc_offset})\n"
+        "Use this as the current reference point when interpreting relative time in chat history "
+        "and user messages (for example: today, yesterday, tomorrow, later, earlier, in 2 hours)."
+    )
+
+
+def _prepend_time_context(system_prompt: str) -> str:
+    """Ensure the prompt always starts with an explicit current-time anchor."""
+    time_context = _build_current_time_context()
+    return f"{time_context}\n\n{system_prompt}".strip() if system_prompt else time_context
+
+
 def build_system_prompt(config: dict, *, include_word_game: bool = True) -> str:
     """
     Assemble the full system prompt from config.
@@ -275,6 +301,8 @@ async def generate(
 
     if revival_system_instruct:
         system_prompt = (system_prompt + "\n\n" + revival_system_instruct).strip()
+
+    system_prompt = _prepend_time_context(system_prompt)
 
     # ── Step 1: text inference via REST generateContent ────────────────────
     # Custom mode with Gemma-style injection when using non-Google APIs
