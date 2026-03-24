@@ -9,6 +9,8 @@ import json
 import asyncio
 import threading
 import time
+import random
+import secrets
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import discord
@@ -45,6 +47,11 @@ from tamagotchi import (
     wipe_soul_file, ensure_inventory_defaults, get_inventory_items,
     inventory_item_id_from_name,
 )
+
+if not hasattr(secrets, "randbits"):
+    # Some deployments resolve `secrets` to a non-stdlib module. Discord's send
+    # path expects randbits to exist when generating message nonces.
+    secrets.randbits = random.getrandbits
 
 # ---------------------------------------------------------------------------
 # Environment
