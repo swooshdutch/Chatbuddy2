@@ -1,0 +1,7 @@
+.env
+.env.*
+!.env.template
+config.json
+config.json.tmp
+__pycache__/
+*.pyc

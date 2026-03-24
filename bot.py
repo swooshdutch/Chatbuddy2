@@ -14,29 +14,42 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import discord
 from discord import app_commands
 from discord.ext import commands
-from dotenv import load_dotenv
 
+from bot_helpers import (
+    build_tama_view as _build_tama_view,
+    command_access_check,
+    configured_owner_id as _configured_owner_id,
+    deny_command as _deny_command,
+    format_tama_item_summary as _format_tama_item_summary,
+    handle_soc_extraction as _handle_soc_extraction,
+    is_allowed_command_user as _is_allowed_command_user,
+    is_owner_user as _is_owner_user,
+    maybe_begin_auto_rest as _maybe_begin_auto_rest,
+    read_soc_context as _read_soc_context,
+    resolve_tama_item_id as _resolve_tama_item_id,
+    tama_hatching_active as _tama_hatching_active,
+)
 from config import load_config, save_config
 from gemini_api import generate, build_system_prompt
-from utils import strip_mention, chunk_message, format_context, resolve_custom_emoji, extract_thoughts, extract_soul_updates, collect_context_entries
+from secrets import has_secret, load_environment, set_secret
+from utils import strip_mention, chunk_message, format_context, resolve_custom_emoji, extract_soul_updates, collect_context_entries
 from revival import RevivalManager
 from auto_chat import AutoChatManager
 from reminders import ReminderManager
 from heartbeat import HeartbeatManager
 from tamagotchi import (
     deplete_stats, broadcast_death,
-    TamagotchiManager, TamagotchiView,
+    TamagotchiManager,
     append_tamagotchi_footer, build_sleeping_message, is_sleeping,
     build_hatching_message, is_hatching, reset_tamagotchi_state,
     wipe_soul_file, ensure_inventory_defaults, get_inventory_items,
-    should_auto_sleep,
-    inventory_item_id_from_name, BUTTON_STYLE_LABELS,
+    inventory_item_id_from_name,
 )
 
 # ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
-load_dotenv()
+load_environment()
 TOKEN = os.getenv("DISCORD_TOKEN")
 SETUP_API_KEY = os.getenv("API_KEY", "")
 SETUP_GEMINI_ENDPOINT = os.getenv("GEMINI_ENDPOINT", "")
@@ -76,147 +89,8 @@ tama_manager: TamagotchiManager | None = None
 _generating_channels: set[int] = set()          # channel IDs currently generating
 _pending_messages: dict[int, list] = defaultdict(list)  # channel_id -> [Message, ...]
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-async def _read_soc_context(bot_ref, config: dict) -> str:
-    """Read SoC channel messages and return formatted context string (or '')."""
-    soc_context_enabled = config.get("soc_context_enabled", False)
-    soc_channel_id = config.get("soc_channel_id")
-    if not soc_context_enabled or not soc_channel_id:
-        return ""
-
-    soc_count = config.get("soc_context_count", 10)
-    soc_channel = bot_ref.get_channel(int(soc_channel_id))
-    if soc_channel is None:
-        return ""
-
-    soc_messages = []
-    async for msg in soc_channel.history(limit=soc_count):
-        soc_messages.append(msg)
-    soc_messages.reverse()
-
-    # Apply [ce] cutoff to SoC context
-    ce_idx = None
-    for i, m in enumerate(soc_messages):
-        if m.content.strip().lower() == "[ce]":
-            ce_idx = i
-    if ce_idx is not None:
-        soc_messages = soc_messages[ce_idx + 1:]
-
-    if not soc_messages:
-        return ""
-
-    soc_lines = []
-    for msg in soc_messages:
-        ts = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
-        soc_lines.append(f"[{ts}] {msg.content}")
-    return (
-        "\n[YOUR PREVIOUS THOUGHTS]\n"
-        + "\n".join(soc_lines)
-        + "\n[END YOUR PREVIOUS THOUGHTS]\n"
-    )
-
-
-async def _handle_soc_extraction(response_text: str, bot_ref, config: dict) -> str:
-    """Extract thoughts, send to SoC channel, return clean text."""
-    soc_enabled = config.get("soc_enabled", False)
-    soc_channel_id = config.get("soc_channel_id")
-    clean_text, thoughts_text = extract_thoughts(response_text)
-    if thoughts_text and soc_enabled and soc_channel_id:
-        thought_channel = bot_ref.get_channel(int(soc_channel_id))
-        if thought_channel is not None:
-            for chunk in chunk_message(thoughts_text):
-                await thought_channel.send(chunk)
-    return clean_text
-
-
-def _build_tama_view():
-    if bot_config.get("tama_enabled", False) and tama_manager:
-        return TamagotchiView(bot_config, tama_manager)
-    return None
-
-
-def _maybe_begin_auto_rest(channel_id: int | str | None) -> bool:
-    if not (bot_config.get("tama_enabled", False) and tama_manager):
-        return False
-    if not should_auto_sleep(bot_config):
-        return False
-    tama_manager.begin_rest(channel_id)
-    return True
-
-
-def _format_tama_item_summary(item: dict) -> str:
-    stock = "unlimited" if item.get("is_unlimited") else f"x{item.get('amount', 0)}"
-    color_name = BUTTON_STYLE_LABELS.get(item.get("button_style", "secondary"), item.get("button_style", "secondary"))
-    parts = [
-        f"{item.get('emoji', '')} **{item.get('name', item.get('id', 'item'))}** "
-        f"(`{item.get('id', '')}`) - {item.get('item_type', 'food')}, "
-        f"fill x{item.get('multiplier', 1.0)}, energy x{item.get('energy_multiplier', 1.0)}, {stock}, {color_name} button"
-    ]
-    happiness_delta = float(item.get("happiness_delta", 0.0) or 0.0)
-    if happiness_delta:
-        parts.append(f"happiness {happiness_delta:+g}")
-    if item.get("lucky_gift_prize"):
-        parts.append("lucky-gift prize")
-    if not item.get("store_in_inventory", True):
-        parts.append("instant-effect reward")
-    return ", ".join(parts)
-
-
-def _resolve_tama_item_id(name_or_id: str) -> str | None:
-    needle = inventory_item_id_from_name(name_or_id)
-    for item in get_inventory_items(bot_config, visible_only=False):
-        if item["id"] == needle or item["name"].strip().lower() == name_or_id.strip().lower():
-            return item["id"]
-    return None
-
-
-def _tama_hatching_active() -> bool:
-    return bool(bot_config.get("tama_enabled", False)) and (
-        (tama_manager.hatching if tama_manager else False) or is_hatching(bot_config)
-    )
-
-
-def _configured_owner_id() -> str:
-    return str(bot_config.get("bot_owner_id") or SETUP_BOT_OWNER_ID or "").strip()
-
-
-def _allowed_command_ids() -> set[str]:
-    ids = {str(x).strip() for x in bot_config.get("command_allowed_user_ids", []) if str(x).strip()}
-    owner_id = _configured_owner_id()
-    if owner_id:
-        ids.add(owner_id)
-    return ids
-
-
-def _is_allowed_command_user(user_id: int | str) -> bool:
-    return str(user_id) in _allowed_command_ids()
-
-
-def _is_owner_user(user_id: int | str) -> bool:
-    owner_id = _configured_owner_id()
-    return bool(owner_id) and str(user_id) == owner_id
-
-
-async def _deny_command(interaction: discord.Interaction) -> None:
-    if interaction.response.is_done():
-        await interaction.followup.send("You are not allowed to use bot setup commands.", ephemeral=True)
-    else:
-        await interaction.response.send_message("You are not allowed to use bot setup commands.", ephemeral=True)
-
-
 async def _command_access_check(interaction: discord.Interaction) -> bool:
-    command_name = getattr(getattr(interaction, "command", None), "name", None)
-    if not command_name and isinstance(getattr(interaction, "data", None), dict):
-        command_name = interaction.data.get("name")
-    if command_name == "help":
-        return True
-    if _is_allowed_command_user(interaction.user.id):
-        return True
-    await _deny_command(interaction)
-    return False
+    return await command_access_check(interaction, bot_config, SETUP_BOT_OWNER_ID)
 
 
 bot.tree.interaction_check = _command_access_check
@@ -743,9 +617,8 @@ async def set_edit_api_current_quota(interaction: discord.Interaction, amount: i
 @app_commands.describe(key="Your Gemini API key")
 @app_commands.default_permissions(administrator=True)
 async def set_api_key(interaction: discord.Interaction, key: str):
-    bot_config["api_key"] = key
-    save_config(bot_config)
-    await interaction.response.send_message("✅ API key has been set and saved.", ephemeral=True)
+    set_secret("api_key", key)
+    await interaction.response.send_message("✅ API key has been stored in `.env`.", ephemeral=True)
 
 
 @bot.tree.command(name="set-multimodal", description="Enable or disable multimodal support (images and audio)")
@@ -871,7 +744,7 @@ async def set_model_mode(interaction: discord.Interaction, mode: app_commands.Ch
         )
     elif mode.value == "custom":
         ep = bot_config.get("model_endpoint_custom", "(not set)")
-        key_status = "set" if bot_config.get("api_key_custom", "").strip() else "not set"
+        key_status = "set" if has_secret("api_key_custom") else "not set"
         info = (
             f"\n⚠️ Custom mode: system prompt injected into user content.\n"
             f"• Endpoint: `{ep}`\n"
@@ -1553,7 +1426,7 @@ async def setup_bot(interaction: discord.Interaction):
     ce_channels = dict(bot_config.get("ce_channels", {}))
     ce_channels[str(SETUP_MAIN_CHAT_CHANNEL)] = True
 
-    bot_config["api_key"] = SETUP_API_KEY
+    set_secret("api_key", SETUP_API_KEY)
     bot_config["model_mode"] = "gemini"
     bot_config["model_endpoint_gemini"] = SETUP_GEMINI_ENDPOINT
     bot_config["audio_endpoint"] = SETUP_AUDIO_ENDPOINT
@@ -2491,9 +2364,8 @@ async def reset_tama_stats(interaction: discord.Interaction):
 @app_commands.describe(key="Your custom model API key")
 @app_commands.default_permissions(administrator=True)
 async def set_api_key_custom(interaction: discord.Interaction, key: str):
-    bot_config["api_key_custom"] = key
-    save_config(bot_config)
-    await interaction.response.send_message("✅ Custom API key has been set and saved.", ephemeral=True)
+    set_secret("api_key_custom", key)
+    await interaction.response.send_message("✅ Custom API key has been stored in `.env`.", ephemeral=True)
 
 
 @bot.tree.command(name="set-api-endpoint-custom", description="Set the endpoint for the custom (non-Google) model")

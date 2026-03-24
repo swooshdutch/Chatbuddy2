@@ -20,7 +20,7 @@ pip install -r requirements.txt
 
 ### 3. Configure Environment
 
-Create a `.env` file in the project root:
+Copy `.env.template` to `.env` in the project root:
 
 ```env
 DISCORD_TOKEN=your_discord_bot_token_here
@@ -33,6 +33,8 @@ SOUL_CHANNEL=123456789012345678
 SYS_INSTRUCT=You are a friendly and witty chatbot named ChatBuddy.
 BOT_OWNER_ID=123456789012345678
 ```
+
+API secrets are stored in `.env` and are automatically scrubbed from `config.json`.
 
 ### 4. Run the Bot
 
@@ -81,7 +83,7 @@ All bot-management commands are owner-gated through `BOT_OWNER_ID` and the `/set
 |---|---|
 | `/setup-bot` | Populate live bot config from backend environment variables |
 | `/set-command-user` | Add or remove a user ID allowed to use bot commands |
-| `/set-api-key` | Set the Gemini API key |
+| `/set-api-key` | Store the Gemini API key in `.env` |
 | `/set-api-context` | Enable internal daily LLM API quota tracking logic |
 | `/check-api-quota` | Check the current tracked daily quota |
 | `/set-edit-api-current-quota` | Manually correct the tracked API usage counter |
@@ -89,7 +91,7 @@ All bot-management commands are owner-gated through `BOT_OWNER_ID` and the `/set
 | `/set-temp` | Set model temperature |
 | `/set-api-endpoint-gemini` | Set the Gemini model endpoint |
 | `/set-api-endpoint-gemma` | Set the Gemma model endpoint |
-| `/set-api-key-custom` | Set the API key for a custom model |
+| `/set-api-key-custom` | Store the custom-model API key in `.env` |
 | `/set-api-endpoint-custom` | Set the endpoint for a custom model |
 | `/set-sys-instruct` | Set the main system prompt |
 | `/show-sys-instruct` | Display the full effective system prompt |

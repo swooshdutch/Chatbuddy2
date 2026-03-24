@@ -7,10 +7,15 @@ import json
 import math
 import os
 
+from secrets import migrate_legacy_secrets, scrub_config_secrets
+from tamagotchi_inventory import (
+    DEFAULT_TAMA_INVENTORY_ITEMS,
+    TAMA_INVENTORY_DEFAULTS_VERSION,
+)
+
 CONFIG_FILE = "config.json"
 
 DEFAULTS = {
-    "api_key": None,
     "system_prompt": "You are a helpful Discord chatbot called ChatBuddy.",
     "multimodal_enabled": False,
     "web_search_enabled": False,
@@ -24,7 +29,6 @@ DEFAULTS = {
     "model_endpoint_gemini": "gemini-2.0-flash",
     "model_endpoint_gemma": "",
     # Custom (non-Google) model support
-    "api_key_custom": "",
     "model_endpoint_custom": "",
     "temperature": 0.7,
     "chat_history_limit": 40,
@@ -140,81 +144,8 @@ DEFAULTS = {
     ),
     "tama_action_log": [],
     "tama_inventory_initialized": False,
-    "tama_inventory_defaults_version": 5,
-    "tama_inventory_items": {
-        "unlimited_hamburger": {
-            "name": "Hamburger",
-            "emoji": "🍔",
-            "item_type": "food",
-            "multiplier": 1.0,
-            "energy_multiplier": 1.0,
-            "happiness_delta": 0.0,
-            "button_style": "success",
-            "amount": -1,
-            "lucky_gift_prize": False,
-            "store_in_inventory": True,
-        },
-        "unlimited_water": {
-            "name": "Cup of Water",
-            "emoji": "🥤",
-            "item_type": "drink",
-            "multiplier": 1.0,
-            "energy_multiplier": 1.0,
-            "happiness_delta": 0.0,
-            "button_style": "primary",
-            "amount": -1,
-            "lucky_gift_prize": False,
-            "store_in_inventory": True,
-        },
-        "teddy_bear": {
-            "name": "Teddy Bear",
-            "emoji": "🧸",
-            "item_type": "misc",
-            "multiplier": 0.0,
-            "energy_multiplier": 0.0,
-            "happiness_delta": 10.0,
-            "button_style": "success",
-            "amount": 0,
-            "lucky_gift_prize": True,
-            "store_in_inventory": True,
-        },
-        "sushi": {
-            "name": "Sushi",
-            "emoji": "🍣",
-            "item_type": "food",
-            "multiplier": 2.0,
-            "energy_multiplier": 2.0,
-            "happiness_delta": 0.0,
-            "button_style": "primary",
-            "amount": 0,
-            "lucky_gift_prize": True,
-            "store_in_inventory": True,
-        },
-        "meat_on_bone": {
-            "name": "Meat on Bone",
-            "emoji": "🍖",
-            "item_type": "food",
-            "multiplier": 3.0,
-            "energy_multiplier": 3.0,
-            "happiness_delta": 0.0,
-            "button_style": "danger",
-            "amount": 0,
-            "lucky_gift_prize": True,
-            "store_in_inventory": True,
-        },
-        "lump_of_coal": {
-            "name": "Lump of Coal",
-            "emoji": "⚫",
-            "item_type": "misc",
-            "multiplier": 0.0,
-            "energy_multiplier": 0.0,
-            "happiness_delta": -10.0,
-            "button_style": "secondary",
-            "amount": 0,
-            "lucky_gift_prize": True,
-            "store_in_inventory": False,
-        },
-    },
+    "tama_inventory_defaults_version": TAMA_INVENTORY_DEFAULTS_VERSION,
+    "tama_inventory_items": DEFAULT_TAMA_INVENTORY_ITEMS,
     # Dirtiness / poop
     "tama_dirt": 0,
     "tama_dirt_max": 4,
@@ -358,6 +289,8 @@ def load_config() -> dict:
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 stored = json.load(f)
+            if migrate_legacy_secrets(stored):
+                stored = scrub_config_secrets(stored)
             config.update(stored)
         except (json.JSONDecodeError, OSError):
             pass  # Corrupted file â€” use defaults
@@ -368,8 +301,9 @@ def load_config() -> dict:
 
 def save_config(config: dict) -> None:
     """Atomically write the config dict to disk."""
+    sanitized = scrub_config_secrets(config)
     tmp_path = CONFIG_FILE + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
+        json.dump(sanitized, f, indent=2, ensure_ascii=False)
     os.replace(tmp_path, CONFIG_FILE)
 

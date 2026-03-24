@@ -17,6 +17,7 @@ from datetime import datetime
 import datetime as dt_module
 
 from config import save_config
+from secrets import get_secret
 from utils import handle_soul_updates, extract_thoughts, extract_reminder_commands
 from tts import generate_tts
 
@@ -195,7 +196,7 @@ async def generate(
     system_prompt_override: if provided, used instead of the auto-assembled
     system prompt.  Used by the word-game hidden turn.
     """
-    api_key = config.get("api_key")
+    api_key = get_secret("api_key")
     if not api_key:
         return MSG_NO_KEY, None, [], []
 
@@ -235,7 +236,7 @@ async def generate(
 
     # Pick API key — custom mode can override
     if custom_mode:
-        effective_api_key = config.get("api_key_custom", "") or api_key
+        effective_api_key = get_secret("api_key_custom") or api_key
     else:
         effective_api_key = api_key
 
