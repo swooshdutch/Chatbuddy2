@@ -161,6 +161,96 @@ def _register_tama_view() -> None:
     bot.add_view(TamagotchiView(bot_config, tama_manager))
     _tama_view_registered = True
 
+
+def _extract_duck_search_query(text: str) -> tuple[str | None, bool]:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None, False
+    if "!search" in cleaned.lower():
+        parts = re.split(r"!search", cleaned, flags=re.IGNORECASE, maxsplit=1)
+        query = parts[1].strip() if len(parts) > 1 else ""
+        return (query or cleaned), True
+    return None, False
+
+
+async def _inject_duck_search_context(user_text: str) -> str:
+    if not bot_config.get("duck_search_enabled", False):
+        return user_text
+
+    query, explicit = _extract_duck_search_query(user_text)
+    if not query:
+        return user_text
+
+    from duck_search import duckduckgo_search_context
+
+    search_ctx, status = await asyncio.to_thread(duckduckgo_search_context, query)
+    if status == "ok":
+        return f"{search_ctx}\n\nUser Question/Message: {user_text}"
+
+    if explicit:
+        reason = (
+            "no live results were found"
+            if status == "no_results"
+            else "live web search is currently unavailable"
+        )
+        return (
+            f"[DuckDuckGo search was explicitly requested for '{query}', but {reason}. "
+            f"Answer as helpfully as you can without web results.]\n\n"
+            f"User Question/Message: {user_text}"
+        )
+
+    return user_text
+
+
+async def _resolve_model_duck_search(
+    response_text: str,
+    context: str,
+    config: dict,
+    *,
+    speaker_name: str,
+    speaker_id: str,
+) -> tuple[str, bytes | None, list[str], list[tuple[str, str, str]], bool]:
+    search_match = re.search(r"<!search:\s*(.+?)>", response_text)
+    if not search_match:
+        return response_text, None, [], [], False
+
+    query = search_match.group(1).strip()
+    cleaned_response = re.sub(r"<!search:\s*.+?>", "", response_text).strip()
+
+    from duck_search import duckduckgo_search_context
+
+    search_ctx, status = await asyncio.to_thread(duckduckgo_search_context, query)
+    if status == "ok":
+        second_input = (
+            f"{cleaned_response}\n\n"
+            f"[Search Results for '{query}']:\n{search_ctx}\n\n"
+            f"Please review the search results above and generate your final user-facing answer. Dodge all <!search:> tags now."
+        )
+    else:
+        reason = (
+            "No live DuckDuckGo results were found."
+            if status == "no_results"
+            else "DuckDuckGo live web search is currently unavailable."
+        )
+        second_input = (
+            f"{cleaned_response}\n\n"
+            f"[Search Request]\n"
+            f"Query: {query}\n"
+            f"Result: {reason}\n\n"
+            f"Please answer the user directly, briefly acknowledge the live-search limitation if needed, "
+            f"and do not output any <!search:> tags."
+        )
+
+    next_response_text, next_audio_bytes, next_soul_logs, next_reminder_cmds = await generate(
+        second_input,
+        context,
+        config,
+        speaker_name=speaker_name,
+        speaker_id=speaker_id,
+        attachments=None,
+    )
+    return next_response_text, next_audio_bytes, next_soul_logs, next_reminder_cmds, True
+
 # ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
@@ -433,18 +523,7 @@ async def _generate_and_respond(message: discord.Message):
         user_text = strip_mention(message.content, bot.user.id)
         if not user_text:
             user_text = "(empty message)"
-
-        import re
-        if bot_config.get("duck_search_enabled", False):
-            if "!search" in user_text.lower():
-                parts = re.split(r"!search", user_text, flags=re.IGNORECASE, maxsplit=1)
-                query = parts[1].strip() if len(parts) > 1 else ""
-                if not query:
-                    query = user_text.strip()
-                from duck_search import get_duckduckgo_context
-                import asyncio
-                search_ctx = await asyncio.to_thread(get_duckduckgo_context, query)
-                user_text = f"{search_ctx}\n\nUser Question/Message: {user_text}"
+        user_text = await _inject_duck_search_context(user_text)
 
         history_limit = bot_config.get("chat_history_limit", 40)
         history_messages = await collect_context_entries(
@@ -485,27 +564,15 @@ async def _generate_and_respond(message: discord.Message):
             is_dead = True
 
         # AI-triggered 2-stage turn for Web Search
-        import re
         if bot_config.get("duck_search_enabled", False):
-            search_match = re.search(r"<!search:\s*(.+?)>", response_text)
-            if search_match:
-                query = search_match.group(1).strip()
-                from duck_search import get_duckduckgo_context
-                import asyncio
-                search_ctx = await asyncio.to_thread(get_duckduckgo_context, query)
-                
-                second_input = (
-                    f"{response_text}\n\n"
-                    f"[Search Results for '{query}']:\n{search_ctx}\n\n"
-                    f"Please review the search results above and generate your final user-facing answer. Dodge all <!search:> tags now."
-                )
-                
-                response_text, audio_bytes, soul_logs2, reminder_cmds2 = await generate(
-                    second_input, context, bot_config,
-                    speaker_name=message.author.display_name,
-                    speaker_id=str(message.author.id),
-                    attachments=None,  # Do not resend attachments on the invisible turn
-                )
+            response_text, audio_bytes, soul_logs2, reminder_cmds2, ran_duck_second_turn = await _resolve_model_duck_search(
+                response_text,
+                context,
+                bot_config,
+                speaker_name=message.author.display_name,
+                speaker_id=str(message.author.id),
+            )
+            if ran_duck_second_turn:
                 # Tamagotchi: deplete stats for the second inference too
                 death_msg2 = deplete_stats(bot_config)
                 started_sleep = _maybe_begin_auto_rest(message.channel.id) or started_sleep
@@ -589,20 +656,7 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
             "[MULTIPLE MESSAGES RECEIVED — respond to all of them naturally]\n"
             + "\n".join(batch_lines)
         )
-
-
-
-        import re
-        if bot_config.get("duck_search_enabled", False):
-            if "!search" in batched_input.lower():
-                parts = re.split(r"!search", batched_input, flags=re.IGNORECASE, maxsplit=1)
-                query = parts[1].strip() if len(parts) > 1 else ""
-                if not query:
-                    query = batched_input.strip()
-                from duck_search import get_duckduckgo_context
-                import asyncio
-                search_ctx = await asyncio.to_thread(get_duckduckgo_context, query)
-                batched_input = f"{search_ctx}\n\nUser Question/Message: {batched_input}"
+        batched_input = await _inject_duck_search_context(batched_input)
 
         history_limit = bot_config.get("chat_history_limit", 40)
         history_messages = await collect_context_entries(
@@ -644,27 +698,15 @@ async def _generate_batched_response(channel: discord.TextChannel, batch: list[d
             is_dead = True
 
         # AI-triggered 2-stage turn for Web Search
-        import re
         if bot_config.get("duck_search_enabled", False):
-            search_match = re.search(r"<!search:\s*(.+?)>", response_text)
-            if search_match:
-                query = search_match.group(1).strip()
-                from duck_search import get_duckduckgo_context
-                import asyncio
-                search_ctx = await asyncio.to_thread(get_duckduckgo_context, query)
-                
-                second_input = (
-                    f"{response_text}\n\n"
-                    f"[Search Results for '{query}']:\n{search_ctx}\n\n"
-                    f"Please review the search results above and generate your final user-facing answer. Dodge all <!search:> tags now."
-                )
-                
-                response_text, audio_bytes, soul_logs2, reminder_cmds2 = await generate(
-                    second_input, context, bot_config,
-                    speaker_name=last_msg.author.display_name,
-                    speaker_id=str(last_msg.author.id),
-                    attachments=None,  # Do not resend attachments on the invisible turn
-                )
+            response_text, audio_bytes, soul_logs2, reminder_cmds2, ran_duck_second_turn = await _resolve_model_duck_search(
+                response_text,
+                context,
+                bot_config,
+                speaker_name=last_msg.author.display_name,
+                speaker_id=str(last_msg.author.id),
+            )
+            if ran_duck_second_turn:
                 # Tamagotchi: deplete stats for the second inference too
                 death_msg2 = deplete_stats(bot_config)
                 started_sleep = _maybe_begin_auto_rest(channel.id) or started_sleep
