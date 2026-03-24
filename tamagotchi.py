@@ -1264,9 +1264,10 @@ def _lucky_gift_pool(config: dict) -> list[dict]:
     return [item for item in get_inventory_items(config, visible_only=False) if item.get("lucky_gift_prize")]
 
 
-def _lucky_gift_countdown_text(config: dict, seconds_remaining: float) -> str:
+def _lucky_gift_countdown_text(config: dict, giver_name: str, seconds_remaining: float) -> str:
     return (
         "🎁 **Lucky Gift**\n"
+        f"**{giver_name}** is opening a present for botty.\n"
         "The ribbon is rustling... something fun is hiding inside.\n"
         f"Reveal in **{max(1, int(seconds_remaining + 0.999))}s**."
     )
@@ -1294,12 +1295,20 @@ def _apply_lucky_gift_reward(config: dict, item: dict) -> tuple[float, int, bool
     return happiness_delta, awarded_amount, stored_in_inventory
 
 
-def _lucky_gift_reveal_text(item: dict, happiness_delta: float, stored_in_inventory: bool) -> str:
-    parts = [f"🎁 **Lucky Gift Opened!**", f"You got {item.get('emoji', '🎁')} **{item.get('name', 'a prize')}**."]
+def _lucky_gift_reveal_text(
+    giver_name: str,
+    item: dict,
+    happiness_delta: float,
+    stored_in_inventory: bool,
+) -> str:
+    parts = [
+        "🎁 **Lucky Gift Opened!**",
+        f"**{giver_name}** gifted botty a {item.get('emoji', '🎁')} **{item.get('name', 'a prize')}**.",
+    ]
     if item.get("item_type") in {"food", "drink"} and float(item.get("multiplier", 0.0) or 0.0) > 0:
         parts.append(f"Fill multiplier: x{item.get('multiplier', 1.0)}.")
     if stored_in_inventory:
-        parts.append("Added to your inventory.")
+        parts.append("Added to botty's inventory.")
     if happiness_delta > 0:
         parts.append(f"Happiness +{_fs(happiness_delta)} {'applied now' if not stored_in_inventory else 'when used'}.")
     elif happiness_delta < 0:
@@ -1779,44 +1788,50 @@ class GameSelectView(ui.View):
             started_sleep = True
         self.manager.set_cooldown("lucky_gift", self.config.get("tama_cd_lucky_gift", 600))
 
+        if interaction.channel is None:
+            await interaction.response.send_message("🎁 I couldn't find a channel to open the gift in.", ephemeral=True)
+            return
+
         duration = max(1, int(self.config.get("tama_lucky_gift_duration", 30)))
-        await interaction.response.edit_message(
-            content=_lucky_gift_countdown_text(self.config, duration),
-            view=None,
+        giver_name = interaction.user.display_name
+        await interaction.response.defer()
+        countdown_message = await interaction.channel.send(
+            _lucky_gift_countdown_text(self.config, giver_name, duration)
         )
 
         for seconds_left in range(duration - 1, 0, -1):
             await asyncio.sleep(1)
             try:
-                await interaction.edit_original_response(
-                    content=_lucky_gift_countdown_text(self.config, seconds_left),
-                    view=None,
+                await countdown_message.edit(
+                    content=_lucky_gift_countdown_text(self.config, giver_name, seconds_left),
                 )
             except Exception:
                 break
 
         prize = random.choice(pool)
         happiness_delta, _, stored_in_inventory = _apply_lucky_gift_reward(self.config, prize)
-        reveal = _lucky_gift_reveal_text(prize, happiness_delta, stored_in_inventory)
+        reveal = _lucky_gift_reveal_text(giver_name, prize, happiness_delta, stored_in_inventory)
         try:
-            await interaction.edit_original_response(content=reveal, view=None)
-        except Exception:
-            pass
-
-        if interaction.channel:
-            public_text = f"🎁 **Lucky Gift** — {interaction.user.display_name} opened a gift and got {prize.get('emoji', '🎁')} **{prize.get('name', 'a prize')}**!"
-            if stored_in_inventory:
-                public_text += "\n🎒 Added to inventory."
-            if happiness_delta > 0 and not stored_in_inventory:
-                public_text += f"\n😊 Happiness +{_fs(happiness_delta)}."
-            elif happiness_delta < 0 and not stored_in_inventory:
-                public_text += f"\n☹️ Happiness {_fs(happiness_delta)}."
-            await interaction.channel.send(
-                append_tamagotchi_footer(public_text, self.config, self.manager),
+            await countdown_message.edit(
+                content=append_tamagotchi_footer(reveal, self.config, self.manager),
                 view=TamagotchiView(self.config, self.manager),
             )
-            if started_sleep:
-                await self.manager.send_sleep_announcement(interaction.channel_id)
+        except Exception:
+            countdown_message = await interaction.channel.send(
+                append_tamagotchi_footer(reveal, self.config, self.manager),
+                view=TamagotchiView(self.config, self.manager),
+            )
+        _log_tamagotchi_action(
+            self.config,
+            interaction,
+            "lucky_gift",
+            countdown_message.id,
+            item_id=prize["id"],
+            item_name=prize["name"],
+            item_emoji=prize["emoji"],
+        )
+        if started_sleep:
+            await self.manager.send_sleep_announcement(interaction.channel_id)
 
 
 class RPSView(ui.View):
