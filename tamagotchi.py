@@ -644,7 +644,7 @@ class TamagotchiManager:
                 channel = None
         return channel
 
-    async def _send_ce_to_primary_channels(self):
+    async def _send_ce_to_primary_channels(self) -> set[int]:
         channel_ids: set[int] = set()
         main_channel_id = self._resolve_main_channel_id()
         if main_channel_id:
@@ -660,6 +660,7 @@ class TamagotchiManager:
                 await channel.send("[ce]")
             except Exception as e:
                 print(f"[Tamagotchi] Failed to send primary [ce] to channel {channel_id}: {e}")
+        return channel_ids
 
     def _clear_hatch_state(self):
         self._hatch_expiry = 0.0
@@ -674,7 +675,14 @@ class TamagotchiManager:
         wipe_soul: bool,
         reset_stats: bool,
         send_ce: bool,
-    ):
+    ) -> dict:
+        result = {
+            "soul_wiped": False,
+            "stats_reset": False,
+            "ce_channel_ids": [],
+            "hatch_channel_id": "",
+            "hatch_message_posted": False,
+        }
         if self._hatch_task and not self._hatch_task.done():
             self._hatch_task.cancel()
         self.clear_poop_timers()
@@ -686,10 +694,13 @@ class TamagotchiManager:
 
         if wipe_soul:
             wipe_soul_file()
+            result["soul_wiped"] = True
         if reset_stats:
             reset_tamagotchi_state(self.config)
+            result["stats_reset"] = True
 
         hatch_channel_id = self._resolve_main_channel_id(channel_id)
+        result["hatch_channel_id"] = hatch_channel_id
         duration = max(1, int(self.config.get("tama_egg_hatch_time", 30)))
         self._hatch_expiry = time.time() + duration
         self.config["tama_hatching"] = True
@@ -699,7 +710,8 @@ class TamagotchiManager:
         save_config(self.config)
 
         if send_ce:
-            await self._send_ce_to_primary_channels()
+            ce_ids = await self._send_ce_to_primary_channels()
+            result["ce_channel_ids"] = sorted(ce_ids)
 
         channel = await self._resolve_channel(hatch_channel_id)
         if channel is not None:
@@ -707,12 +719,14 @@ class TamagotchiManager:
                 msg = await channel.send(build_hatching_message(self.config))
                 self.config["tama_hatch_message_id"] = str(msg.id)
                 save_config(self.config)
+                result["hatch_message_posted"] = True
             except Exception as e:
                 print(f"[Tamagotchi] Failed to post hatch message in channel {hatch_channel_id}: {e}")
 
         if self._hatch_task and not self._hatch_task.done():
             self._hatch_task.cancel()
         self._hatch_task = asyncio.create_task(self._hatch_loop())
+        return result
 
     async def _update_hatch_message(self, channel) -> None:
         message_id = str(self.config.get("tama_hatch_message_id", "") or "").strip()

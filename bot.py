@@ -188,6 +188,25 @@ def _restart_background_managers():
     if tama_manager:
         tama_manager.start()
 
+
+def _ensure_tama_manager() -> TamagotchiManager:
+    global tama_manager
+    if tama_manager is None:
+        tama_manager = TamagotchiManager(bot, bot_config)
+        bot.tama_manager = tama_manager
+    tama_manager.start()
+    return tama_manager
+
+
+async def _run_tama_fresh_start(channel_id: int | str | None = None) -> dict:
+    manager = _ensure_tama_manager()
+    return await manager.start_egg_cycle(
+        channel_id=channel_id,
+        wipe_soul=True,
+        reset_stats=True,
+        send_ce=True,
+    )
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def purgecommands(ctx):
@@ -1496,20 +1515,15 @@ async def setup_bot(interaction: discord.Interaction):
 
         save_config(bot_config)
         _restart_background_managers()
-        if tama_manager:
-            await tama_manager.start_egg_cycle(
-                channel_id=SETUP_MAIN_CHAT_CHANNEL,
-                wipe_soul=True,
-                reset_stats=True,
-                send_ce=True,
+        fresh_start = await _run_tama_fresh_start(channel_id=SETUP_MAIN_CHAT_CHANNEL)
+        if not fresh_start.get("hatch_message_posted"):
+            raise RuntimeError(
+                "Fresh start did not post a hatch message. "
+                f"Target channel: {fresh_start.get('hatch_channel_id') or '(missing)'}"
             )
-        else:
-            wipe_soul_file()
-            reset_tamagotchi_state(bot_config)
-            save_config(bot_config)
 
         await interaction.followup.send(
-            "Setup complete. Backend settings were applied, the Tamagotchi was reset, `[ce]` was sent to the main chat and thoughts channels, and a new egg is now hatching.",
+            "Setup complete. Backend settings were applied, the soul was wiped, `[ce]` was sent, and a new egg is now hatching.",
             ephemeral=True,
         )
     except Exception as e:
@@ -2386,13 +2400,14 @@ async def dev_set_stats(
 @bot.tree.command(name="reset-tama-stats", description="Reset the Tamagotchi state or start a fresh egg")
 @app_commands.default_permissions(administrator=True)
 async def reset_tama_stats(interaction: discord.Interaction):
-    if bot_config.get("tama_enabled", False) and tama_manager:
+    if bot_config.get("tama_enabled", False):
         await interaction.response.defer(ephemeral=True)
-        await tama_manager.start_egg_cycle(
-            wipe_soul=True,
-            reset_stats=True,
-            send_ce=True,
-        )
+        fresh_start = await _run_tama_fresh_start()
+        if not fresh_start.get("hatch_message_posted"):
+            raise RuntimeError(
+                "Fresh start did not post a hatch message. "
+                f"Target channel: {fresh_start.get('hatch_channel_id') or '(missing)'}"
+            )
         await interaction.followup.send(
             "✅ Tamagotchi reset complete. Soul wiped, `[ce]` sent to the main chat and thoughts channels, and a new egg is hatching.",
             ephemeral=True,
