@@ -7,7 +7,7 @@ import json
 import math
 import os
 
-from secrets import migrate_legacy_secrets, scrub_config_secrets
+from secret_store import migrate_legacy_secrets, scrub_config_secrets
 from tamagotchi_inventory import (
     DEFAULT_TAMA_INVENTORY_ITEMS,
     TAMA_INVENTORY_DEFAULTS_VERSION,

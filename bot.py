@@ -31,7 +31,7 @@ from bot_helpers import (
 )
 from config import load_config, save_config
 from gemini_api import generate, build_system_prompt
-from secrets import has_secret, load_environment, set_secret
+from secret_store import has_secret, load_environment, set_secret
 from utils import strip_mention, chunk_message, format_context, resolve_custom_emoji, extract_soul_updates, collect_context_entries
 from revival import RevivalManager
 from auto_chat import AutoChatManager
@@ -1420,54 +1420,60 @@ async def setup_bot(interaction: discord.Interaction):
         return
 
     await interaction.response.defer(ephemeral=True)
+    try:
+        allowed_channels = dict(bot_config.get("allowed_channels", {}))
+        allowed_channels[str(SETUP_MAIN_CHAT_CHANNEL)] = True
+        ce_channels = dict(bot_config.get("ce_channels", {}))
+        ce_channels[str(SETUP_MAIN_CHAT_CHANNEL)] = True
 
-    allowed_channels = dict(bot_config.get("allowed_channels", {}))
-    allowed_channels[str(SETUP_MAIN_CHAT_CHANNEL)] = True
-    ce_channels = dict(bot_config.get("ce_channels", {}))
-    ce_channels[str(SETUP_MAIN_CHAT_CHANNEL)] = True
+        set_secret("api_key", SETUP_API_KEY)
+        bot_config["model_mode"] = "gemini"
+        bot_config["model_endpoint_gemini"] = SETUP_GEMINI_ENDPOINT
+        bot_config["audio_endpoint"] = SETUP_AUDIO_ENDPOINT
+        bot_config["audio_enabled"] = bool(SETUP_AUDIO_ENDPOINT)
+        bot_config["multimodal_enabled"] = True
+        bot_config["duck_search_enabled"] = True
+        bot_config["system_prompt"] = SETUP_SYS_INSTRUCT or bot_config.get("system_prompt", "")
+        bot_config["allowed_channels"] = allowed_channels
+        bot_config["ce_channels"] = ce_channels
+        bot_config["soc_channel_id"] = str(SETUP_THOUGHTS_CHANNEL) if SETUP_THOUGHTS_CHANNEL else None
+        bot_config["soc_enabled"] = bool(SETUP_THOUGHTS_CHANNEL)
+        bot_config["soc_context_enabled"] = bool(SETUP_THOUGHTS_CHANNEL)
+        bot_config["soul_channel_id"] = str(SETUP_SOUL_CHANNEL) if SETUP_SOUL_CHANNEL else ""
+        bot_config["soul_channel_enabled"] = bool(SETUP_SOUL_CHANNEL)
+        bot_config["soul_enabled"] = True
+        bot_config["soul_limit"] = 10000
+        bot_config["tama_enabled"] = True
+        bot_config["heartbeat_enabled"] = False
+        bot_config["auto_chat_enabled"] = False
+        bot_config["bot_owner_id"] = _configured_owner_id()
+        bot_config["reminders_channel_id"] = str(SETUP_MAIN_CHAT_CHANNEL)
+        bot_config["main_chat_channel_id"] = str(SETUP_MAIN_CHAT_CHANNEL)
 
-    set_secret("api_key", SETUP_API_KEY)
-    bot_config["model_mode"] = "gemini"
-    bot_config["model_endpoint_gemini"] = SETUP_GEMINI_ENDPOINT
-    bot_config["audio_endpoint"] = SETUP_AUDIO_ENDPOINT
-    bot_config["audio_enabled"] = bool(SETUP_AUDIO_ENDPOINT)
-    bot_config["multimodal_enabled"] = True
-    bot_config["duck_search_enabled"] = True
-    bot_config["system_prompt"] = SETUP_SYS_INSTRUCT or bot_config.get("system_prompt", "")
-    bot_config["allowed_channels"] = allowed_channels
-    bot_config["ce_channels"] = ce_channels
-    bot_config["soc_channel_id"] = str(SETUP_THOUGHTS_CHANNEL) if SETUP_THOUGHTS_CHANNEL else None
-    bot_config["soc_enabled"] = bool(SETUP_THOUGHTS_CHANNEL)
-    bot_config["soc_context_enabled"] = bool(SETUP_THOUGHTS_CHANNEL)
-    bot_config["soul_channel_id"] = str(SETUP_SOUL_CHANNEL) if SETUP_SOUL_CHANNEL else ""
-    bot_config["soul_channel_enabled"] = bool(SETUP_SOUL_CHANNEL)
-    bot_config["soul_enabled"] = True
-    bot_config["soul_limit"] = 10000
-    bot_config["tama_enabled"] = True
-    bot_config["heartbeat_enabled"] = False
-    bot_config["auto_chat_enabled"] = False
-    bot_config["bot_owner_id"] = _configured_owner_id()
-    bot_config["reminders_channel_id"] = str(SETUP_MAIN_CHAT_CHANNEL)
-    bot_config["main_chat_channel_id"] = str(SETUP_MAIN_CHAT_CHANNEL)
-
-    save_config(bot_config)
-    _restart_background_managers()
-    if tama_manager:
-        await tama_manager.start_egg_cycle(
-            channel_id=SETUP_MAIN_CHAT_CHANNEL,
-            wipe_soul=True,
-            reset_stats=True,
-            send_ce=True,
-        )
-    else:
-        wipe_soul_file()
-        reset_tamagotchi_state(bot_config)
         save_config(bot_config)
+        _restart_background_managers()
+        if tama_manager:
+            await tama_manager.start_egg_cycle(
+                channel_id=SETUP_MAIN_CHAT_CHANNEL,
+                wipe_soul=True,
+                reset_stats=True,
+                send_ce=True,
+            )
+        else:
+            wipe_soul_file()
+            reset_tamagotchi_state(bot_config)
+            save_config(bot_config)
 
-    await interaction.followup.send(
-        "Setup complete. Backend settings were applied, the Tamagotchi was reset, `[ce]` was sent to the main chat and thoughts channels, and a new egg is now hatching.",
-        ephemeral=True,
-    )
+        await interaction.followup.send(
+            "Setup complete. Backend settings were applied, the Tamagotchi was reset, `[ce]` was sent to the main chat and thoughts channels, and a new egg is now hatching.",
+            ephemeral=True,
+        )
+    except Exception as e:
+        print(f"[ChatBuddy] /setup-bot failed: {e}")
+        await interaction.followup.send(
+            f"Setup failed: `{type(e).__name__}: {e}`",
+            ephemeral=True,
+        )
 
 
 @bot.tree.command(name="set-command-user", description="Add or remove a user ID that can use bot commands")

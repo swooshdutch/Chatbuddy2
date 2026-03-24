@@ -17,7 +17,7 @@ from datetime import datetime
 import datetime as dt_module
 
 from config import save_config
-from secrets import get_secret
+from secret_store import get_secret
 from utils import handle_soul_updates, extract_thoughts, extract_reminder_commands
 from tts import generate_tts
 
