@@ -55,10 +55,34 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "lucky_gift_prize": True,
         "store_in_inventory": True,
     },
+    "milk": {
+        "name": "Milk",
+        "emoji": "🥛",
+        "item_type": "drink",
+        "multiplier": 2.0,
+        "energy_multiplier": 2.0,
+        "happiness_delta": 0.0,
+        "button_style": "primary",
+        "amount": 0,
+        "lucky_gift_prize": True,
+        "store_in_inventory": True,
+    },
     "meat_on_bone": {
         "name": "Meat on Bone",
         "emoji": "🍖",
         "item_type": "food",
+        "multiplier": 3.0,
+        "energy_multiplier": 3.0,
+        "happiness_delta": 0.0,
+        "button_style": "danger",
+        "amount": 0,
+        "lucky_gift_prize": True,
+        "store_in_inventory": True,
+    },
+    "bubble_tea": {
+        "name": "Bubble Tea",
+        "emoji": "🧋",
+        "item_type": "drink",
         "multiplier": 3.0,
         "energy_multiplier": 3.0,
         "happiness_delta": 0.0,
@@ -80,7 +104,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "store_in_inventory": False,
     },
 }
-TAMA_INVENTORY_DEFAULTS_VERSION = 5
+TAMA_INVENTORY_DEFAULTS_VERSION = 6
 
 BUTTON_STYLE_BY_NAME = {
     "primary": discord.ButtonStyle.primary,

@@ -92,7 +92,7 @@ DEFAULTS = {
     # Thirst
     "tama_thirst": 100.0,
     "tama_thirst_max": 100,
-    "tama_thirst_depletion": 1.0,
+    "tama_thirst_depletion": 2.0,
     # Happiness
     "tama_happiness": 100.0,
     "tama_happiness_max": 100,
@@ -187,7 +187,7 @@ DEFAULTS = {
     "tama_resp_medicate_healthy": "I'm not sick! No medicine needed.",
     "tama_resp_clean": "🚿 Squeaky clean!",
     "tama_resp_clean_none": "Already clean! No mess to tidy.",
-    "tama_resp_poop": "oops i pooped",
+    "tama_resp_poop": "oops i pooped 💩",
     "tama_resp_cooldown": "⏳ Hold on! You can use this again in {time}.",
     "tama_resp_rest": "💤 Tucking in for a recharge. See you soon!",
     "tama_resp_sleeping": "I am sleeping come back in {time}",
@@ -281,6 +281,29 @@ def _migrate_tamagotchi_scale(config: dict, stored: dict | None = None) -> bool:
     return True
 
 
+def _migrate_tamagotchi_default_tuning(config: dict, stored: dict | None = None) -> bool:
+    stored = stored or {}
+    changed = False
+
+    # Only update values that still match the old shipped defaults.
+    if stored.get("tama_resp_poop") == "oops i pooped":
+        config["tama_resp_poop"] = "oops i pooped 💩"
+        changed = True
+
+    if "tama_thirst_depletion" not in stored:
+        return changed
+
+    try:
+        stored_thirst = float(stored.get("tama_thirst_depletion", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        stored_thirst = None
+    if stored_thirst == 1.0:
+        config["tama_thirst_depletion"] = 2.0
+        changed = True
+
+    return changed
+
+
 def load_config() -> dict:
     """Load config from disk, falling back to defaults for any missing keys."""
     config = dict(DEFAULTS)
@@ -295,6 +318,8 @@ def load_config() -> dict:
         except (json.JSONDecodeError, OSError):
             pass  # Corrupted file â€” use defaults
     if _migrate_tamagotchi_scale(config, stored):
+        save_config(config)
+    if _migrate_tamagotchi_default_tuning(config, stored):
         save_config(config)
     return config
 
