@@ -42,6 +42,7 @@ from heartbeat import HeartbeatManager
 from tamagotchi import (
     deplete_stats, broadcast_death,
     TamagotchiManager,
+    TamagotchiView,
     append_tamagotchi_footer, build_sleeping_message, is_sleeping,
     build_hatching_message, is_hatching, reset_tamagotchi_state,
     wipe_soul_file, ensure_inventory_defaults, get_inventory_items,
@@ -91,6 +92,7 @@ auto_chat_manager: AutoChatManager | None = None
 reminder_manager: ReminderManager | None = None
 heartbeat_manager: HeartbeatManager | None = None
 tama_manager: TamagotchiManager | None = None
+_tama_view_registered = False
 
 # Message batching: tracks which channels are mid-generation and queues
 # incoming mentions/replies so they can be processed as a single batch.
@@ -147,6 +149,18 @@ async def _command_access_check(interaction: discord.Interaction) -> bool:
 
 bot.tree.interaction_check = _command_access_check
 
+
+def _register_tama_view() -> None:
+    global _tama_view_registered
+    if (
+        _tama_view_registered
+        or tama_manager is None
+        or not bot_config.get("tama_enabled", False)
+    ):
+        return
+    bot.add_view(TamagotchiView(bot_config, tama_manager))
+    _tama_view_registered = True
+
 # ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
@@ -176,6 +190,7 @@ async def on_ready():
     tama_manager = TamagotchiManager(bot, bot_config)
     tama_manager.start()
     bot.tama_manager = tama_manager
+    _register_tama_view()
 
     try:
         synced = await bot.tree.sync()
@@ -202,6 +217,7 @@ def _ensure_tama_manager() -> TamagotchiManager:
     if tama_manager is None:
         tama_manager = TamagotchiManager(bot, bot_config)
         bot.tama_manager = tama_manager
+        _register_tama_view()
     tama_manager.start()
     return tama_manager
 

@@ -88,7 +88,7 @@ async def collect_context_entries(
     config: Optional[dict] = None,
     before: Optional[discord.Message] = None,
 ) -> List[Union[discord.Message, ContextEntry]]:
-    fetch_limit = max(limit, 1)
+    fetch_limit = max(limit * 4, 120, 1)
     messages: List[discord.Message] = []
     async for msg in channel.history(limit=fetch_limit, before=before):
         messages.append(msg)
@@ -122,11 +122,16 @@ def format_context(messages: List[Union[discord.Message, ContextEntry]], ce_enab
         if ce_index is not None:
             messages = messages[ce_index + 1:]  # everything after the last [ce]
 
-    lines: List[str] = []
-    for msg in messages:
+    lines: List[str] = [
+        "[CONTEXT ORDER] Oldest to newest. The newest message is the final entry marked [LATEST]."
+    ]
+    for idx, msg in enumerate(messages):
         entry = _to_context_entry(msg)
         timestamp = entry.timestamp.strftime("%Y-%m-%d %H:%M:%S")
-        lines.append(f"[{timestamp}] {entry.display_name} (ID:{entry.user_id}): {entry.content}")
+        latest_marker = "[LATEST] " if idx == len(messages) - 1 else ""
+        lines.append(
+            f"{latest_marker}[{timestamp}] {entry.display_name} (ID:{entry.user_id}): {entry.content}"
+        )
     return "\n".join(lines)
 
 

@@ -538,18 +538,26 @@ class TamagotchiManager:
 
     async def _run_automated_prompt_turn(self, channel, prompt: str, *, sleep_started_at: float | None = None):
         from gemini_api import generate
-        from utils import chunk_message, format_context, resolve_custom_emoji, extract_thoughts
+        from utils import (
+            chunk_message,
+            collect_context_entries,
+            format_context,
+            resolve_custom_emoji,
+            extract_thoughts,
+        )
 
         history_limit = max(1, int(self.config.get("chat_history_limit", 40) or 40))
-        fetch_limit = max(history_limit * 4, 120)
-        history_messages: list[discord.Message] = []
-        async for msg in channel.history(limit=fetch_limit):
-            if sleep_started_at is not None and sleep_started_at > 0.0 and msg.created_at.timestamp() < sleep_started_at:
-                continue
-            history_messages.append(msg)
-        history_messages.reverse()
-        if len(history_messages) > history_limit:
-            history_messages = history_messages[-history_limit:]
+        history_messages = await collect_context_entries(
+            channel,
+            history_limit,
+            config=self.config,
+        )
+        if sleep_started_at is not None and sleep_started_at > 0.0:
+            history_messages = [
+                msg
+                for msg in history_messages
+                if msg.created_at.timestamp() >= sleep_started_at
+            ]
 
         ce_channels = self.config.get("ce_channels", {})
         ce_enabled = ce_channels.get(str(channel.id), True)

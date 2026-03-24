@@ -107,7 +107,9 @@ class HeartbeatManager:
             if latest_non_bot_message is not None:
                 self._last_non_bot_message_id = latest_non_bot_message.id
 
-            context = format_context(history_messages, ce_enabled=True)
+            ce_channels = self.config.get("ce_channels", {})
+            ce_enabled = ce_channels.get(str(channel.id), True)
+            context = format_context(history_messages, ce_enabled=ce_enabled)
             soc_channel_id = self.config.get("soc_channel_id")
             context += await read_soc_context(self.bot, self.config)
 
