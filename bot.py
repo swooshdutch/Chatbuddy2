@@ -162,6 +162,11 @@ def _register_tama_view() -> None:
     _tama_view_registered = True
 
 
+def _is_inline_duck_search_message(message: discord.Message) -> bool:
+    content = strip_mention(message.content or "", bot.user.id).strip()
+    return content.lower().startswith("!search")
+
+
 def _extract_duck_search_query(text: str) -> tuple[str | None, bool]:
     cleaned = (text or "").strip()
     if not cleaned:
@@ -477,8 +482,9 @@ async def on_message(message: discord.Message):
         if recent_msgs and all(m.author.bot for m in recent_msgs):
             return
 
-    # If it is mentioned, also make sure we process commands in case it's a command too
-    await bot.process_commands(message)
+    # Let inline Duck search stay in the normal chat flow instead of the legacy prefix-command parser.
+    if not _is_inline_duck_search_message(message):
+        await bot.process_commands(message)
 
     # â”€â”€ Message batching: queue if already generating â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     ch_id = message.channel.id
@@ -500,6 +506,13 @@ async def on_message(message: discord.Message):
     finally:
         _generating_channels.discard(ch_id)
         _pending_messages.pop(ch_id, None)
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    raise error
 
 
 # ---------------------------------------------------------------------------
