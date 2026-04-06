@@ -15,6 +15,25 @@ from tamagotchi import (
 from utils import chunk_message, extract_thoughts
 
 
+async def resolve_channel(bot_ref, channel_id: int | str | None):
+    """Return a cached channel if possible, otherwise fetch it from Discord."""
+    if not channel_id:
+        return None
+    try:
+        numeric_id = int(channel_id)
+    except (TypeError, ValueError):
+        return None
+
+    channel = bot_ref.get_channel(numeric_id)
+    if channel is not None:
+        return channel
+
+    try:
+        return await bot_ref.fetch_channel(numeric_id)
+    except Exception:
+        return None
+
+
 async def read_soc_context(bot_ref, config: dict) -> str:
     """Read SoC channel messages and return formatted context string (or '')."""
     soc_context_enabled = config.get("soc_context_enabled", False)
@@ -23,13 +42,17 @@ async def read_soc_context(bot_ref, config: dict) -> str:
         return ""
 
     soc_count = config.get("soc_context_count", 10)
-    soc_channel = bot_ref.get_channel(int(soc_channel_id))
+    soc_channel = await resolve_channel(bot_ref, soc_channel_id)
     if soc_channel is None:
         return ""
 
     soc_messages = []
-    async for msg in soc_channel.history(limit=soc_count):
-        soc_messages.append(msg)
+    try:
+        async for msg in soc_channel.history(limit=soc_count):
+            soc_messages.append(msg)
+    except Exception as e:
+        print(f"[SoC] Failed to read context history: {e}")
+        return ""
     soc_messages.reverse()
 
     ce_idx = None
@@ -59,11 +82,38 @@ async def handle_soc_extraction(response_text: str, bot_ref, config: dict) -> st
     soc_channel_id = config.get("soc_channel_id")
     clean_text, thoughts_text = extract_thoughts(response_text)
     if thoughts_text and soc_enabled and soc_channel_id:
-        thought_channel = bot_ref.get_channel(int(soc_channel_id))
-        if thought_channel is not None:
-            for chunk in chunk_message(thoughts_text):
-                await thought_channel.send(chunk)
+        try:
+            thought_channel = await resolve_channel(bot_ref, soc_channel_id)
+            if thought_channel is not None:
+                for chunk in chunk_message(thoughts_text):
+                    await thought_channel.send(chunk)
+        except Exception as e:
+            print(f"[SoC] Failed to post extracted thoughts: {e}")
     return clean_text
+
+
+async def send_soul_logs(bot_ref, config: dict, soul_logs: list[str]) -> None:
+    """Send soul update logs to the configured soul channel when enabled."""
+    if not soul_logs or not config.get("soul_channel_enabled"):
+        return
+
+    soul_channel_id = str(config.get("soul_channel_id", "") or "").strip()
+    if not soul_channel_id:
+        return
+
+    soul_channel = await resolve_channel(bot_ref, soul_channel_id)
+    if soul_channel is None:
+        print(f"[Soul] Could not resolve configured soul channel {soul_channel_id}.")
+        return
+
+    joined_logs = "\n".join(log for log in soul_logs if log)
+    prefix = "**Soul Updates:**\n"
+    for log_chunk in chunk_message(joined_logs, limit=1900):
+        try:
+            await soul_channel.send(f"{prefix}{log_chunk}")
+        except Exception as e:
+            print(f"[Soul] Failed to send soul logs: {e}")
+            return
 
 
 def build_tama_view(bot_config: dict, tama_manager) -> TamagotchiView | None:
@@ -93,6 +143,9 @@ def format_tama_item_summary(item: dict) -> str:
         f"fill x{item.get('multiplier', 1.0)}, energy x{item.get('energy_multiplier', 1.0)}, "
         f"{stock}, {color_name} button"
     ]
+    energy_delta = float(item.get("energy_delta", 0.0) or 0.0)
+    if energy_delta:
+        parts.append(f"energy {energy_delta:+g}")
     happiness_delta = float(item.get("happiness_delta", 0.0) or 0.0)
     if happiness_delta:
         parts.append(f"happiness {happiness_delta:+g}")

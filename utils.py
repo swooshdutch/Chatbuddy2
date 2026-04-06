@@ -1,14 +1,14 @@
 """
-utils.py — Utility functions for ChatBuddy.
+utils.py - Utility functions for ChatBuddy.
 Mention stripping, message chunking, context formatting, and emoji resolution.
 """
 
-import re
-import os
 import json
+import os
+import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Union, Optional
+from typing import Dict, List, Optional, Union
 
 import discord
 
@@ -25,7 +25,6 @@ class ContextEntry:
 
 def strip_mention(text: str, bot_id: int) -> str:
     """Remove the bot's mention tag(s) from the message text."""
-    # Matches both <@bot_id> and <@!bot_id>
     pattern = rf"<@!?{bot_id}>"
     return re.sub(pattern, "", text).strip()
 
@@ -35,6 +34,9 @@ def chunk_message(text: str, limit: int = 2000) -> List[str]:
     Split *text* into chunks of at most *limit* characters.
     Prefers splitting at newlines, then spaces, to keep messages readable.
     """
+    if not text:
+        return []
+
     if len(text) <= limit:
         return [text]
 
@@ -44,13 +46,10 @@ def chunk_message(text: str, limit: int = 2000) -> List[str]:
             chunks.append(text)
             break
 
-        # Try to split at a newline within the limit
         split_pos = text.rfind("\n", 0, limit)
         if split_pos == -1:
-            # Fall back to a space
             split_pos = text.rfind(" ", 0, limit)
         if split_pos == -1:
-            # Hard cut if no good break point
             split_pos = limit
 
         chunks.append(text[:split_pos])
@@ -90,8 +89,11 @@ async def collect_context_entries(
 ) -> List[Union[discord.Message, ContextEntry]]:
     fetch_limit = max(limit * 4, 120, 1)
     messages: List[discord.Message] = []
-    async for msg in channel.history(limit=fetch_limit, before=before):
-        messages.append(msg)
+    try:
+        async for msg in channel.history(limit=fetch_limit, before=before):
+            messages.append(msg)
+    except Exception as e:
+        print(f"[Context] Failed to read channel history: {e}")
     messages.reverse()
     if len(messages) > limit:
         messages = messages[-limit:]
@@ -110,17 +112,16 @@ def format_context(messages: List[Union[discord.Message, ContextEntry]], ce_enab
     such as <@id>, <:emoji:id>, etc. so the model sees how they actually appear.
 
     If *ce_enabled* is True, any message whose content is exactly "[ce]"
-    (case-insensitive) acts as a context boundary — all messages before it
+    (case-insensitive) acts as a context boundary - all messages before it
     (and the [ce] message itself) are discarded.
     """
     if ce_enabled:
-        # Find the index of the LAST [ce] message
         ce_index = None
         for i, msg in enumerate(messages):
             if _entry_content(msg).strip().lower() == "[ce]":
                 ce_index = i
         if ce_index is not None:
-            messages = messages[ce_index + 1:]  # everything after the last [ce]
+            messages = messages[ce_index + 1:]
 
     lines: List[str] = [
         "[CONTEXT ORDER] Oldest to newest. The newest message is the final entry marked [LATEST]."
@@ -141,7 +142,7 @@ def resolve_custom_emoji(text: str, guild: discord.Guild | None) -> str:
 
     Scans for patterns like :emoji_name: and, if a matching custom emoji exists
     in the guild, replaces it with <:emoji_name:id> (or <a:emoji_name:id> for
-    animated emoji).  Standard Unicode emoji and unknown shortcodes are left
+    animated emoji). Standard Unicode emoji and unknown shortcodes are left
     untouched.
 
     If *guild* is None (e.g. DMs), the text is returned unchanged.
@@ -149,41 +150,34 @@ def resolve_custom_emoji(text: str, guild: discord.Guild | None) -> str:
     if guild is None or not guild.emojis:
         return text
 
-    # Build a lookup: lowercase emoji name -> emoji object
     emoji_map = {e.name.lower(): e for e in guild.emojis}
     if not emoji_map:
         return text
 
-    # First, temporarily protect already-resolved Discord emoji from being
-    # re-processed.  These look like <:name:id> or <a:name:id>.
-    # We swap them out, do our replacements, then swap them back.
-    _PLACEHOLDER = "\x00EMOJI{}\x00"
+    placeholder = "\x00EMOJI{}\x00"
     protected: list[str] = []
 
     def _protect(match: re.Match) -> str:
         protected.append(match.group(0))
-        return _PLACEHOLDER.format(len(protected) - 1)
+        return placeholder.format(len(protected) - 1)
 
     text = re.sub(r"<a?:\w+:\d+>", _protect, text)
 
     def _replace(match: re.Match) -> str:
         name = match.group(1)
-        # Skip purely-numeric matches — these are timestamp fragments like :34:
         if name.isdigit():
             return match.group(0)
         emoji = emoji_map.get(name.lower())
         if emoji is None:
-            return match.group(0)  # not a guild emoji — leave as-is
+            return match.group(0)
         if emoji.animated:
             return f"<a:{emoji.name}:{emoji.id}>"
         return f"<:{emoji.name}:{emoji.id}>"
 
-    # Match :word_chars: (2+ chars, matching Discord's minimum emoji name length)
     text = re.sub(r":([A-Za-z0-9_]{2,}):", _replace, text)
 
-    # Restore protected emoji
     for i, original in enumerate(protected):
-        text = text.replace(_PLACEHOLDER.format(i), original)
+        text = text.replace(placeholder.format(i), original)
 
     return text
 
@@ -193,74 +187,65 @@ def extract_thoughts(text: str) -> tuple[str, str | None]:
     Extract content between <my-thoughts> and </my-thoughts> tags.
 
     Returns (clean_text, thoughts_text):
-      - clean_text: everything AFTER the last </my-thoughts> closing tag,
-        with all thought blocks removed.  Users see only this.
-      - thoughts_text: the concatenated inner content of all thought blocks
-        (or None if no tags were found).
+      - clean_text: visible response text with thought blocks removed
+      - thoughts_text: concatenated inner content of all thought blocks
     """
-    pattern = re.compile(r"<my-thoughts>(.*?)</my-thoughts>", re.DOTALL)
+    pattern = re.compile(
+        r"<\s*my-thoughts\s*>(.*?)</\s*my-thoughts\s*>",
+        re.DOTALL | re.IGNORECASE,
+    )
     matches = pattern.findall(text)
 
     if not matches:
         return text, None
 
-    # Collect all thought content
     thoughts_text = "\n".join(m.strip() for m in matches)
-
-    # Remove all thought blocks (tags + content) from the response
     clean_text = pattern.sub("", text).strip()
-
     return clean_text, thoughts_text
 
 
 def extract_soul_updates(text: str) -> tuple[str, list[tuple[str, str, str]]]:
     """
-    Extracts soul tags directly from generated text.
+    Extract soul tags directly from generated text.
+
     Returns:
       (clean_text, [(action, id, content), ...])
-    Wait for markdown escapes and optional whitespace around [id]:
-       <!soul-update[id]: text>
-       <!soul-delete[id]>
     """
     updates = []
-    
-    # Match <!soul-add-new[id]: ...>, <!soul-update[id]: ...>, <!soul-override[id]: ...>, <!soul-delete[id]>
-    # Handle possible markdown escaping or spaces (e.g. \<\!soul-update\[1\]:)
     pattern = re.compile(
-        r"\\?<\s*\\?!\s*soul-(add-new|update|override|delete)\s*\\?\[\s*(.+?)\s*\\?\](?:\s*:\s*(.*?))?\s*\\?>", 
-        re.DOTALL | re.IGNORECASE
+        r"\\?<\s*\\?!\s*"
+        r"soul-(add-new|update|override|delete)"
+        r"\s*\\?\[\s*(.+?)\s*\\?\]"
+        r"(?:\s*:\s*(.*?))?"
+        r"\s*(?:\\?!\s*)?\\?>",
+        re.DOTALL | re.IGNORECASE,
     )
-    
+
     for match in pattern.finditer(text):
         action = match.group(1).lower()
         entry_id = match.group(2).strip()
         content = match.group(3)
-        if content:
-            content = content.strip()
-        else:
-            content = ""
-        updates.append((action, entry_id, content))
-        
+        updates.append((action, entry_id, content.strip() if content else ""))
+
     clean_text = pattern.sub("", text).strip()
     return clean_text, updates
 
 
 def handle_soul_updates(response_text: str, config: dict) -> tuple[str, list[str]]:
     """
-    Extracts tags, enforces limit, and applies to JSON in soul.md.
-    Returns (clean_text, logs), where `logs` is a list of log strings to print to soul-channel.
+    Extract tags, enforce the soul size limit, and apply updates to soul.md.
+
+    Returns (clean_text, logs).
     """
     clean_text, updates = extract_soul_updates(response_text)
-    logs = []
+    logs: list[str] = []
 
-    soul_enabled = config.get("soul_enabled", False)
-    if not soul_enabled or not updates:
+    if not config.get("soul_enabled", False) or not updates:
         return clean_text, logs
 
     soul_limit = config.get("soul_limit", 2000)
     soul_file = "soul.md"
 
-    # Read current soul.md
     soul_data: Dict[str, str] = {}
     if os.path.exists(soul_file):
         try:
@@ -269,19 +254,16 @@ def handle_soul_updates(response_text: str, config: dict) -> tuple[str, list[str
                 if content:
                     soul_data = json.loads(content)
         except json.JSONDecodeError:
-            # Conversion for legacy raw text to JSON
             print("[Soul] Converting legacy text to JSON entry '0'.")
             soul_data = {"0": content}
         except Exception as e:
             print(f"[Soul] Error reading soul file: {e}")
 
-    # Process updates
     made_changes = False
     for action, entry_id, content in updates:
-        # Ignore empty ids
         if not entry_id:
             continue
-            
+
         previous_data = soul_data.copy()
 
         if action == "add-new":
@@ -306,33 +288,30 @@ def handle_soul_updates(response_text: str, config: dict) -> tuple[str, list[str
             soul_data[entry_id] = content
             logs.append(f"**Overwrote [{entry_id}]**:\n`{content}`")
             made_changes = True
-            
+
         elif action == "delete":
             if entry_id in soul_data:
                 del soul_data[entry_id]
                 logs.append(f"**Deleted [{entry_id}]**")
                 made_changes = True
 
-        # Validation per action step
         if made_changes:
             new_json_str = json.dumps(soul_data, indent=2, ensure_ascii=False)
             if len(new_json_str) > soul_limit:
-                # Reject this specific update, rollback state
                 soul_data = previous_data
                 made_changes = False
                 if logs:
-                    logs.pop() # remove associated log for rejection
+                    logs.pop()
                 print(f"[Soul] Update rejected: {len(new_json_str)} chars > {soul_limit} limit.")
-                # We record a 1-turn error injection
                 from config import save_config
+
                 config["soul_error_turn"] = (
                     f"System Error: Failed to apply soul action '{action}' on ID '{entry_id}' because it exceeded the {soul_limit} "
                     f"character JSON file limit (attempted {len(new_json_str)} chars). "
-                    f"Faulty output rejected."
+                    "Faulty output rejected."
                 )
                 save_config(config)
 
-    # Save to file if we hold valid changes
     if made_changes:
         new_json_str = json.dumps(soul_data, indent=2, ensure_ascii=False)
         try:
@@ -347,66 +326,49 @@ def handle_soul_updates(response_text: str, config: dict) -> tuple[str, list[str
 
 def extract_reminder_commands(text: str) -> tuple[str, list[tuple[str, str, str]]]:
     """
-    Extract reminder / wake-time command tags from generated text.
+    Extract reminder and wake-time command tags from generated text.
 
-    Recognised tag patterns (very tolerant of bot formatting):
-        <!add-reminder : [datetime] [prompt]>
-        <add-reminder : datetime prompt>
-        <!delete-reminder : datetime prompt>
-        <!add-auto-wake-time : datetime prompt>
-        <!delete-auto-wake-time : datetime prompt>
-        ... and markdown-escaped variants (\\< \\! \\> etc.)
+    Recognised tag patterns:
+        <!add-reminder : [datetime] [prompt]!>
+        <!delete-reminder : [datetime] [prompt]!>
+        <!add-auto-wake-time : [datetime] [prompt]!>
+        <!delete-auto-wake-time : [datetime] [prompt]!>
 
-    The datetime portion is accepted in many formats:
-        dd-mm-yy HH:MM         (canonical)
-        YYYY-MM-DD HH:MM       (ISO-ish)
-        YYYY-MM-DD HH:MM:SS    (ISO with seconds)
-        dd/mm/yy HH:MM         (slash variant)
-        and more.
-
-    Returns (clean_text, commands) where each command is a tuple of
-    (action, datetime_str, prompt_str).
+    Markdown-escaped variants such as \\<\\! ... \\!\\> are also supported.
     """
     commands: list[tuple[str, str, str]] = []
 
-    # Very tolerant regex:
-    #   - <, !, brackets are optional and may be backslash-escaped
-    #   - datetime is any reasonable date+time string (digits, separators, colons)
-    #   - prompt is everything between the datetime and closing >
-    #   - closing > is REQUIRED (the tag must end somewhere)
-    ACTIONS = r"(add-reminder|delete-reminder|add-auto-wake-time|delete-auto-wake-time)"
-    # Accept dates like: 20-03-26 22:30  |  2026-03-20 21:46:00  |  20/03/26 22:30
-    DT_PART = r"([\d]{2,4}[-/.][\d]{2}[-/.][\d]{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)"
-    # Prompt: everything else until close — greedy, anchored on the > at the end
-    PROMPT_PART = r"(.+?)"
+    actions = r"(add-reminder|delete-reminder|add-auto-wake-time|delete-auto-wake-time)"
+    dt_part = r"([\d]{2,4}[-/.][\d]{2}[-/.][\d]{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)"
+    prompt_part = r"(.+?)"
 
     pattern = re.compile(
-        r"\\?<\s*\\?!?\s*"       # opening < (optional !, optional escaping)
-        + ACTIONS +
-        r"\s*:?\s*"               # optional colon
-        r"\\?\[?\s*" + DT_PART + r"\s*\\?\]?\s+"   # datetime (optional brackets)
-        r"\\?\[?\s*" + PROMPT_PART + r"\s*\\?\]?"   # prompt  (optional brackets)
-        r"\s*\\?>",               # REQUIRED closing >
-        re.IGNORECASE,
+        r"\\?<\s*\\?!\s*"
+        + actions
+        + r"\s*:?\s*"
+        + r"\\?\[?\s*"
+        + dt_part
+        + r"\s*\\?\]?\s+"
+        + r"\\?\[?\s*"
+        + prompt_part
+        + r"\s*\\?\]?"
+        + r"\s*\\?!\s*\\?>",
+        re.IGNORECASE | re.DOTALL,
     )
 
     for match in pattern.finditer(text):
-        action = match.group(1).lower()
-        dt_str = match.group(2).strip()
-        prompt_str = match.group(3).strip()
-        # Strip trailing > or \ that may have been caught in the prompt
-        prompt_str = prompt_str.rstrip(">").rstrip("\\").strip()
-        commands.append((action, dt_str, prompt_str))
+        commands.append(
+            (
+                match.group(1).lower(),
+                match.group(2).strip(),
+                match.group(3).strip(),
+            )
+        )
 
-    clean_text = pattern.sub("", text).strip()
-
-    # Secondary cleanup: catch any remaining tag-like fragments the main regex
-    # might have missed (e.g. bot outputs with unusual whitespace / newlines)
     leftover = re.compile(
-        r"\\?<\s*\\?!?\s*(?:add-reminder|delete-reminder|add-auto-wake-time|delete-auto-wake-time)"
-        r"[^>]*>?",
-        re.IGNORECASE,
+        r"\\?<\s*\\?!\s*(?:add-reminder|delete-reminder|add-auto-wake-time|delete-auto-wake-time)"
+        r"[\s\S]*?\\?!\s*\\?>",
+        re.IGNORECASE | re.DOTALL,
     )
-    clean_text = leftover.sub("", clean_text).strip()
-
+    clean_text = leftover.sub("", pattern.sub("", text)).strip()
     return clean_text, commands

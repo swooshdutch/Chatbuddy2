@@ -1,40 +1,83 @@
 """
-heartbeat.py — Periodic heartbeat background task for ChatBuddy.
+heartbeat.py - Periodic heartbeat background task for ChatBuddy.
 
-Unlike auto-chat, heartbeat has NO idle timer and always fires on the
-configured interval regardless of who posted the last message.  It
-simply calls generate() with the configured heartbeat prompt and posts
-the response in the designated channel.
+Unlike auto-chat, heartbeat has no idle timer and always fires on the
+configured interval unless it is inside the configured quiet window.
 """
 
 import io
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 
 import discord
 from discord.ext import tasks
 
+from bot_helpers import read_soc_context, send_soul_logs
+from tamagotchi import TamagotchiView, append_tamagotchi_footer, is_hatching, is_sleeping
 from utils import (
-    format_context,
     chunk_message,
-    resolve_custom_emoji,
-    extract_thoughts,
-    extract_reminder_commands,
     collect_context_entries,
+    extract_thoughts,
+    format_context,
+    resolve_custom_emoji,
 )
-from tamagotchi import TamagotchiView, append_tamagotchi_footer, is_sleeping, is_hatching
-from bot_helpers import read_soc_context
+
+
+def normalize_heartbeat_rest_time(value: str) -> str | None:
+    match = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*", str(value or ""))
+    if not match:
+        return None
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return None
+    return f"{hour:02d}:{minute:02d}"
+
+
+def heartbeat_rest_active(config: dict, *, now: datetime | None = None) -> bool:
+    if not config.get("heartbeat_rest_enabled", True):
+        return False
+
+    duration_minutes = int(config.get("heartbeat_rest_duration_minutes", 480) or 0)
+    if duration_minutes <= 0:
+        return False
+
+    normalized = normalize_heartbeat_rest_time(config.get("heartbeat_rest_start_time", "00:00"))
+    if normalized is None:
+        return False
+
+    now = (now or datetime.now()).astimezone()
+    hour, minute = map(int, normalized.split(":"))
+    today_start = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    window = timedelta(minutes=duration_minutes)
+
+    for start in (today_start, today_start - timedelta(days=1)):
+        if start <= now < start + window:
+            return True
+    return False
+
+
+def wake_auto_chat_from_heartbeat(bot, config: dict) -> bool:
+    """Reset or wake auto-chat after a heartbeat cycle when auto-chat is enabled."""
+    if not config.get("auto_chat_enabled"):
+        return False
+
+    auto_chat_manager = getattr(bot, "auto_chat_manager", None)
+    if not auto_chat_manager:
+        return False
+
+    auto_chat_manager.note_activity("heartbeat")
+    return True
 
 
 class HeartbeatManager:
-    """Fires a generate() call every N minutes, unconditionally."""
+    """Fires a generate() call every N minutes."""
 
     def __init__(self, bot, config: dict):
         self.bot = bot
         self.config = config
         self._task: tasks.Loop | None = None
         self._last_non_bot_message_id: int | None = None
-
-    # ── lifecycle ──────────────────────────────────────────────────────
 
     def start(self):
         """Start (or restart) the heartbeat loop."""
@@ -61,10 +104,10 @@ class HeartbeatManager:
             self._task.cancel()
         self._task = None
 
-    # ── core tick ──────────────────────────────────────────────────────
-
     async def _tick(self):
         if not self.config.get("heartbeat_enabled"):
+            return
+        if heartbeat_rest_active(self.config):
             return
         if self.config.get("tama_enabled", False) and (is_sleeping(self.config) or is_hatching(self.config)):
             return
@@ -82,7 +125,8 @@ class HeartbeatManager:
             return
 
         try:
-            from gemini_api import generate  # lazy to avoid circular import
+            from gemini_api import generate
+
             history_limit = self.config.get("chat_history_limit", 30)
             history_messages = await collect_context_entries(
                 channel,
@@ -98,11 +142,7 @@ class HeartbeatManager:
                 latest_non_bot_message is not None
                 and latest_non_bot_message.id != self._last_non_bot_message_id
             )
-            if (
-                self.config.get("tama_enabled", False)
-                and tama_manager
-                and has_new_user_activity
-            ):
+            if self.config.get("tama_enabled", False) and tama_manager and has_new_user_activity:
                 tama_manager.record_interaction()
             if latest_non_bot_message is not None:
                 self._last_non_bot_message_id = latest_non_bot_message.id
@@ -135,65 +175,53 @@ class HeartbeatManager:
                 config=self.config,
             )
 
-            # Tamagotchi: deplete stats after inference (no emoji consumption — bot-initiated)
             is_dead = False
             if self.config.get("tama_enabled", False):
-                from tamagotchi import deplete_stats, broadcast_death
+                from tamagotchi import broadcast_death, deplete_stats
+
                 death_msg = deplete_stats(self.config)
                 if death_msg:
                     response_text = (response_text + "\n\n" + death_msg) if response_text else death_msg
                     is_dead = True
 
-            # Process reminder tags
-            response_text, new_cmds = extract_reminder_commands(response_text)
-            if new_cmds:
+            if reminder_cmds:
                 from reminders import ReminderManager
-                rm = ReminderManager(self.bot, self.config)
-                await rm._apply_commands(new_cmds, source_channel_id=str(channel.id))
 
-            # SoC thought extraction
+                rm = ReminderManager(self.bot, self.config)
+                await rm._apply_commands(reminder_cmds, source_channel_id=str(channel.id))
+
             soc_enabled = self.config.get("soc_enabled", False)
             clean_text, thoughts_text = extract_thoughts(response_text)
             if thoughts_text and soc_enabled and soc_channel_id:
                 thought_ch = self.bot.get_channel(int(soc_channel_id))
                 if thought_ch is not None:
-                    for c in chunk_message(thoughts_text):
-                        await thought_ch.send(c)
-            response_text = clean_text
+                    for chunk in chunk_message(thoughts_text):
+                        await thought_ch.send(chunk)
+            response_text = clean_text.strip()
 
-            # Resolve custom emoji
-            response_text = resolve_custom_emoji(response_text, channel.guild)
+            visible_response_text = resolve_custom_emoji(response_text, channel.guild).strip()
 
-            # Send audio if present
             if audio_bytes:
                 audio_file = discord.File(
                     fp=io.BytesIO(audio_bytes), filename="heartbeat.wav"
                 )
                 await channel.send(file=audio_file)
 
-            # Send text response
-            if response_text:
+            if visible_response_text:
                 tama_view = None
                 tama_manager = getattr(self.bot, "tama_manager", None)
                 if self.config.get("tama_enabled", False) and tama_manager:
                     tama_view = TamagotchiView(self.config, tama_manager)
-                    response_text = append_tamagotchi_footer(response_text, self.config, tama_manager)
-                chunks = chunk_message(response_text)
+                    visible_response_text = append_tamagotchi_footer(visible_response_text, self.config, tama_manager)
+                chunks = chunk_message(visible_response_text)
                 for i, chunk in enumerate(chunks):
                     await channel.send(chunk, view=tama_view if i == len(chunks) - 1 else None)
 
-            # Soul logs
-            if soul_logs and self.config.get("soul_channel_enabled"):
-                ch_id = self.config.get("soul_channel_id")
-                if ch_id:
-                    soul_ch = self.bot.get_channel(int(ch_id))
-                    if soul_ch:
-                        joined_logs = "\n".join(soul_logs)
-                        for log_chunk in chunk_message(joined_logs, limit=1900):
-                            await soul_ch.send(f"**🧠 Soul Updates:**\n{log_chunk}")
+            await send_soul_logs(self.bot, self.config, soul_logs)
 
             if is_dead:
                 await broadcast_death(self.bot, self.config)
+            wake_auto_chat_from_heartbeat(self.bot, self.config)
             print(f"[Heartbeat] Fired at {datetime.now().strftime('%H:%M:%S')}.")
 
         except Exception as e:

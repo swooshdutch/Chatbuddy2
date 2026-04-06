@@ -14,7 +14,7 @@ from config import save_config
 from gemini_api import generate
 from utils import format_context, chunk_message, resolve_custom_emoji, extract_thoughts, extract_reminder_commands, collect_context_entries
 from tamagotchi import TamagotchiView, append_tamagotchi_footer, is_sleeping, is_hatching
-from bot_helpers import read_soc_context
+from bot_helpers import read_soc_context, send_soul_logs
 
 
 class RevivalManager:
@@ -148,25 +148,27 @@ class RevivalManager:
                 if thought_ch is not None:
                     for c in chunk_message(thoughts_text):
                         await thought_ch.send(c)
-            response_text = clean_text
+            response_text = clean_text.strip()
 
             response_text = resolve_custom_emoji(response_text, channel.guild)
+            visible_response_text = response_text.strip()
             tama_view = None
             tama_manager = getattr(self.bot, "tama_manager", None)
-            if self.config.get("tama_enabled", False) and tama_manager:
+            if visible_response_text and self.config.get("tama_enabled", False) and tama_manager:
                 tama_view = TamagotchiView(self.config, tama_manager)
-                response_text = append_tamagotchi_footer(response_text, self.config, tama_manager)
+                visible_response_text = append_tamagotchi_footer(visible_response_text, self.config, tama_manager)
             footer = f"\n-# :loudspeaker: chat reviver active for : {active_minutes}m 0s"
-            if response_text:
-                response_text = response_text.rstrip() + footer
+            if visible_response_text:
+                visible_response_text = visible_response_text.rstrip() + footer
             else:
-                response_text = footer.lstrip("\n")
-            chunks = chunk_message(response_text)
+                visible_response_text = footer.lstrip("\n")
+            chunks = chunk_message(visible_response_text)
             for i, chunk in enumerate(chunks):
                 await channel.send(chunk, view=tama_view if i == len(chunks) - 1 else None)
 
         # Log soul changes
-        if soul_logs and self.config.get("soul_channel_enabled"):
+        await send_soul_logs(self.bot, self.config, soul_logs)
+        if False:
             ch_id = self.config.get("soul_channel_id")
             if ch_id:
                 soul_ch = self.bot.get_channel(int(ch_id))
@@ -289,25 +291,27 @@ class RevivalManager:
                         if thought_ch is not None:
                             for c in chunk_message(thoughts_text):
                                 await thought_ch.send(c)
-                    response_text = clean_text
+                    response_text = clean_text.strip()
 
                     response_text = resolve_custom_emoji(response_text, channel.guild)
+                    visible_response_text = response_text.strip()
                     tama_view = None
                     tama_manager = getattr(self.bot, "tama_manager", None)
-                    if self.config.get("tama_enabled", False) and tama_manager:
+                    if visible_response_text and self.config.get("tama_enabled", False) and tama_manager:
                         tama_view = TamagotchiView(self.config, tama_manager)
-                        response_text = append_tamagotchi_footer(response_text, self.config, tama_manager)
+                        visible_response_text = append_tamagotchi_footer(visible_response_text, self.config, tama_manager)
                     footer = f"\n-# :loudspeaker: chat reviver active for : {remaining_m}m {remaining_s}s"
-                    if response_text:
-                        response_text = response_text.rstrip() + footer
+                    if visible_response_text:
+                        visible_response_text = visible_response_text.rstrip() + footer
                     else:
-                        response_text = footer.lstrip("\n")
-                    chunks = chunk_message(response_text)
+                        visible_response_text = footer.lstrip("\n")
+                    chunks = chunk_message(visible_response_text)
                     for i, chunk in enumerate(chunks):
                         await channel.send(chunk, view=tama_view if i == len(chunks) - 1 else None)
 
                 # Log soul changes
-                if soul_logs and self.config.get("soul_channel_enabled"):
+                await send_soul_logs(self.bot, self.config, soul_logs)
+                if False:
                     ch_id = self.config.get("soul_channel_id")
                     if ch_id:
                         soul_ch = self.bot.get_channel(int(ch_id))

@@ -8,6 +8,12 @@ import math
 import os
 
 from secret_store import migrate_legacy_secrets, scrub_config_secrets
+from system_prompt_store import (
+    DEFAULT_BOT_NAME,
+    DEFAULT_BOT_PERSONALITY,
+    ensure_system_prompt_template_file,
+    migrate_legacy_system_prompt,
+)
 from tamagotchi_inventory import (
     DEFAULT_TAMA_INVENTORY_ITEMS,
     TAMA_INVENTORY_DEFAULTS_VERSION,
@@ -16,7 +22,8 @@ from tamagotchi_inventory import (
 CONFIG_FILE = "config.json"
 
 DEFAULTS = {
-    "system_prompt": "You are a helpful Discord chatbot called ChatBuddy.",
+    "bot_name": DEFAULT_BOT_NAME,
+    "bot_personality": DEFAULT_BOT_PERSONALITY,
     "multimodal_enabled": False,
     "web_search_enabled": False,
     "duck_search_enabled": False,
@@ -52,12 +59,6 @@ DEFAULTS = {
     # Dynamic system prompt â€” appended after main prompt when enabled
     "dynamic_prompt": "",
     "dynamic_prompt_enabled": False,
-    # Word game
-    "word_game_prompt": "",         # prompt text with {secret-word} placeholder
-    "word_game_enabled": False,
-    "word_game_selector_prompt": "",  # system prompt for hidden word-selection turn
-    "secret_word": "",
-    "secret_word_allowed_roles": [],  # role IDs allowed to use /set-secret-word
     # Soul (dynamic auto-updating memory)
     "soul_enabled": False,
     "soul_limit": 2000,
@@ -69,6 +70,7 @@ DEFAULTS = {
     "auto_chat_channel_id": None,
     "auto_chat_interval": 30,        # seconds between checks
     "auto_chat_idle_minutes": 10,    # idle timeout
+    "auto_chat_idle_message_enabled": False,
     "auto_chat_idle_message": "Going afk, ping me if you need me",
     # Reminders & auto-wake
     "reminders_enabled": False,
@@ -82,6 +84,9 @@ DEFAULTS = {
     "heartbeat_interval_minutes": 60,
     "heartbeat_channel_id": None,
     "heartbeat_prompt": "",
+    "heartbeat_rest_enabled": True,
+    "heartbeat_rest_start_time": "00:00",
+    "heartbeat_rest_duration_minutes": 480,
     # â”€â”€ Tamagotchi (unified gamified system) â”€â”€
     "tama_enabled": False,
     "tama_stat_scale_version": 2,
@@ -126,6 +131,7 @@ DEFAULTS = {
     "tama_hatch_until": 0.0,
     "tama_hatch_channel_id": "",
     "tama_hatch_message_id": "",
+    "tama_birth_at": 0.0,
     "tama_egg_hatch_time": 30,
     "tama_hatch_prompt": (
         "You have just hatched in this Discord server. Your life has begun right now. "
@@ -167,7 +173,10 @@ DEFAULTS = {
     "tama_drink_energy_every": 1,
     "tama_drink_energy_gain": 1.0,
     "tama_drink_energy_counter": 0,
-    "tama_play_happiness": 10.0,
+    "tama_play_happiness": 0.0,
+    "tama_rps_reward_user_win": 5.0,
+    "tama_rps_reward_draw": 10.0,
+    "tama_rps_reward_bot_win": 20.0,
     "tama_lucky_gift_duration": 30,
     "tama_cd_lucky_gift": 600,
     "tama_medicate_health_heal": 20.0,
@@ -176,7 +185,8 @@ DEFAULTS = {
     "tama_cd_feed": 60,
     "tama_cd_drink": 30,
     "tama_cd_other": 60,
-    "tama_cd_play": 60,
+    "tama_cd_play": 0,
+    "tama_cd_rps": 60,
     "tama_cd_medicate": 60,
     "tama_cd_clean": 60,
     # Configurable response messages
@@ -198,6 +208,15 @@ DEFAULTS = {
     "command_allowed_user_ids": [],
     "main_chat_channel_id": "",
 }
+
+REMOVED_CONFIG_KEYS = (
+    "system_prompt",
+    "word_game_prompt",
+    "word_game_enabled",
+    "word_game_selector_prompt",
+    "secret_word",
+    "secret_word_allowed_roles",
+)
 
 
 def _scaled_whole_number(value, *, minimum: float | None = None) -> float:
@@ -256,7 +275,7 @@ def _migrate_tamagotchi_scale(config: dict, stored: dict | None = None) -> bool:
     config["tama_feed_energy_gain"] = _scaled_whole_number(config.get("tama_feed_energy_gain", 0.1), minimum=1.0)
     config["tama_drink_amount"] = _scaled_whole_number(config.get("tama_drink_amount", 1.0), minimum=1.0)
     config["tama_drink_energy_gain"] = _scaled_whole_number(config.get("tama_drink_energy_gain", 0.05), minimum=1.0)
-    config["tama_play_happiness"] = _scaled_whole_number(config.get("tama_play_happiness", 1.0), minimum=1.0)
+    config["tama_play_happiness"] = _scaled_whole_number(config.get("tama_play_happiness", 1.0), minimum=0.0)
     config["tama_medicate_health_heal"] = _scaled_whole_number(config.get("tama_medicate_health_heal", 2.0), minimum=1.0)
     config["tama_medicate_happiness_cost"] = _scaled_whole_number(config.get("tama_medicate_happiness_cost", 0.3), minimum=1.0)
 
@@ -290,23 +309,44 @@ def _migrate_tamagotchi_default_tuning(config: dict, stored: dict | None = None)
         config["tama_resp_poop"] = "oops i pooped 💩"
         changed = True
 
-    if "tama_thirst_depletion" not in stored:
-        return changed
+    if "tama_thirst_depletion" in stored:
+        try:
+            stored_thirst = float(stored.get("tama_thirst_depletion", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            stored_thirst = None
+        if stored_thirst == 1.0:
+            config["tama_thirst_depletion"] = 2.0
+            changed = True
 
-    try:
-        stored_thirst = float(stored.get("tama_thirst_depletion", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        stored_thirst = None
-    if stored_thirst == 1.0:
-        config["tama_thirst_depletion"] = 2.0
-        changed = True
+        try:
+            stored_drink_cd = int(stored.get("tama_cd_drink", 0) or 0)
+        except (TypeError, ValueError):
+            stored_drink_cd = None
+        if stored_drink_cd == 60:
+            config["tama_cd_drink"] = 30
+            changed = True
 
-    try:
-        stored_drink_cd = int(stored.get("tama_cd_drink", 0) or 0)
-    except (TypeError, ValueError):
-        stored_drink_cd = None
-    if stored_drink_cd == 60:
-        config["tama_cd_drink"] = 30
+    if all(
+        key not in stored
+        for key in (
+            "tama_rps_reward_user_win",
+            "tama_rps_reward_draw",
+            "tama_rps_reward_bot_win",
+        )
+    ):
+        try:
+            stored_play_happiness = float(stored.get("tama_play_happiness", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            stored_play_happiness = None
+        if stored_play_happiness == 10.0:
+            config["tama_play_happiness"] = 0.0
+            changed = True
+
+    if "tama_cd_rps" not in stored and "tama_cd_play" in stored:
+        try:
+            config["tama_cd_rps"] = int(stored.get("tama_cd_play", config.get("tama_cd_rps", 60)) or 0)
+        except (TypeError, ValueError):
+            config["tama_cd_rps"] = int(config.get("tama_cd_rps", 60) or 60)
         changed = True
 
     return changed
@@ -314,8 +354,10 @@ def _migrate_tamagotchi_default_tuning(config: dict, stored: dict | None = None)
 
 def load_config() -> dict:
     """Load config from disk, falling back to defaults for any missing keys."""
+    ensure_system_prompt_template_file()
     config = dict(DEFAULTS)
     stored: dict | None = None
+    needs_save = False
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -325,16 +367,30 @@ def load_config() -> dict:
             config.update(stored)
         except (json.JSONDecodeError, OSError):
             pass  # Corrupted file â€” use defaults
+
+    if isinstance(stored, dict):
+        if "system_prompt" in stored:
+            migrate_legacy_system_prompt(stored.get("system_prompt"))
+            needs_save = True
+        for key in REMOVED_CONFIG_KEYS:
+            if key in config:
+                config.pop(key, None)
+                needs_save = True
+
     if _migrate_tamagotchi_scale(config, stored):
-        save_config(config)
+        needs_save = True
     if _migrate_tamagotchi_default_tuning(config, stored):
+        needs_save = True
+    if needs_save:
         save_config(config)
     return config
 
 
 def save_config(config: dict) -> None:
     """Atomically write the config dict to disk."""
-    sanitized = scrub_config_secrets(config)
+    sanitized = scrub_config_secrets(dict(config))
+    for key in REMOVED_CONFIG_KEYS:
+        sanitized.pop(key, None)
     tmp_path = CONFIG_FILE + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(sanitized, f, indent=2, ensure_ascii=False)

@@ -13,6 +13,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "item_type": "food",
         "multiplier": 1.0,
         "energy_multiplier": 1.0,
+        "energy_delta": 0.0,
         "happiness_delta": 0.0,
         "button_style": "success",
         "amount": -1,
@@ -25,6 +26,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "item_type": "drink",
         "multiplier": 1.0,
         "energy_multiplier": 1.0,
+        "energy_delta": 0.0,
         "happiness_delta": 0.0,
         "button_style": "primary",
         "amount": -1,
@@ -37,6 +39,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "item_type": "misc",
         "multiplier": 0.0,
         "energy_multiplier": 0.0,
+        "energy_delta": 0.0,
         "happiness_delta": 10.0,
         "button_style": "success",
         "amount": 0,
@@ -49,6 +52,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "item_type": "food",
         "multiplier": 2.0,
         "energy_multiplier": 2.0,
+        "energy_delta": 0.0,
         "happiness_delta": 0.0,
         "button_style": "primary",
         "amount": 0,
@@ -61,6 +65,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "item_type": "drink",
         "multiplier": 2.0,
         "energy_multiplier": 2.0,
+        "energy_delta": 0.0,
         "happiness_delta": 0.0,
         "button_style": "primary",
         "amount": 0,
@@ -73,6 +78,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "item_type": "food",
         "multiplier": 3.0,
         "energy_multiplier": 3.0,
+        "energy_delta": 0.0,
         "happiness_delta": 0.0,
         "button_style": "danger",
         "amount": 0,
@@ -85,8 +91,35 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "item_type": "drink",
         "multiplier": 3.0,
         "energy_multiplier": 3.0,
+        "energy_delta": 0.0,
         "happiness_delta": 0.0,
         "button_style": "danger",
+        "amount": 0,
+        "lucky_gift_prize": True,
+        "store_in_inventory": True,
+    },
+    "pinata": {
+        "name": "Piñata",
+        "emoji": "🪅",
+        "item_type": "food",
+        "multiplier": 1.0,
+        "energy_multiplier": 0.0,
+        "energy_delta": 0.0,
+        "happiness_delta": 30.0,
+        "button_style": "success",
+        "amount": 0,
+        "lucky_gift_prize": True,
+        "store_in_inventory": True,
+    },
+    "battery": {
+        "name": "Battery",
+        "emoji": "🔋",
+        "item_type": "misc",
+        "multiplier": 0.0,
+        "energy_multiplier": 0.0,
+        "energy_delta": 50.0,
+        "happiness_delta": 0.0,
+        "button_style": "success",
         "amount": 0,
         "lucky_gift_prize": True,
         "store_in_inventory": True,
@@ -97,6 +130,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "item_type": "misc",
         "multiplier": 0.0,
         "energy_multiplier": 0.0,
+        "energy_delta": 0.0,
         "happiness_delta": -10.0,
         "button_style": "secondary",
         "amount": 0,
@@ -104,7 +138,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "store_in_inventory": False,
     },
 }
-TAMA_INVENTORY_DEFAULTS_VERSION = 6
+TAMA_INVENTORY_DEFAULTS_VERSION = 8
 
 BUTTON_STYLE_BY_NAME = {
     "primary": discord.ButtonStyle.primary,
@@ -174,6 +208,7 @@ def _normalize_inventory_item(item_id: str, raw_item: dict) -> dict:
 
     multiplier = max(0.0, float(raw_item.get("multiplier", 1.0) or 0.0))
     energy_multiplier = max(0.0, float(raw_item.get("energy_multiplier", 1.0) or 0.0))
+    energy_delta = round(float(raw_item.get("energy_delta", 0.0) or 0.0), 2)
     happiness_delta = round(float(raw_item.get("happiness_delta", 0.0) or 0.0), 2)
     amount = _coerce_item_amount(raw_item.get("amount", 0))
     default_emoji = "🍔" if item_type == "food" else ("🥤" if item_type == "drink" else "🎁")
@@ -186,6 +221,7 @@ def _normalize_inventory_item(item_id: str, raw_item: dict) -> dict:
         "item_type": item_type,
         "multiplier": multiplier,
         "energy_multiplier": energy_multiplier,
+        "energy_delta": energy_delta,
         "happiness_delta": happiness_delta,
         "button_style": button_style,
         "amount": amount,
@@ -225,7 +261,7 @@ def get_inventory_item(config: dict, item_id: str) -> dict | None:
 
 
 def inventory_button_style(item: dict) -> discord.ButtonStyle:
-    return BUTTON_STYLE_BY_NAME.get(item.get("button_style", "secondary"), discord.ButtonStyle.secondary)
+    return discord.ButtonStyle.secondary
 
 
 def inventory_message_text(config: dict) -> str:

@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 from config import save_config
 from secret_store import get_secret
+from system_prompt_store import read_system_prompt_template, render_prompt_template
 from utils import handle_soul_updates, extract_thoughts, extract_reminder_commands
 from tts import generate_tts
 
@@ -39,7 +40,7 @@ MSG_GENERIC_ERROR = "⚠️ Something went wrong while generating a response. Pl
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def _build_current_time_context() -> str:
+def _build_current_time_context(config: dict | None = None) -> str:
     """Return a compact local-time header for the top of the system prompt."""
     now = datetime.now().astimezone()
     tz_name = now.tzname() or "local"
@@ -49,40 +50,46 @@ def _build_current_time_context() -> str:
     else:
         utc_offset = "UTC unknown"
 
-    return (
+    lines = [
         "[CURRENT TIME CONTEXT]\n"
         f"Local datetime: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
         f"Weekday: {now.strftime('%A')}\n"
         f"Timezone: {tz_name} ({utc_offset})\n"
         "Use this as the current reference point when interpreting relative time in chat history "
         "and user messages (for example: today, yesterday, tomorrow, later, earlier, in 2 hours)."
-    )
+    ]
+
+    birth_at = float((config or {}).get("tama_birth_at", 0.0) or 0.0)
+    if birth_at > 0.0:
+        birth_dt = datetime.fromtimestamp(birth_at, tz=dt_module.timezone.utc).astimezone(now.tzinfo)
+        lines.append(
+            "\n[BIRTHDAY CONTEXT]\n"
+            f"Your birthday (the exact time you hatched) is {birth_dt.strftime('%Y-%m-%d %H:%M:%S')}.\n"
+            f"Birthday weekday: {birth_dt.strftime('%A')}.\n"
+            f"Birthday timezone: {tz_name} ({utc_offset})."
+        )
+
+    return "".join(lines)
 
 
-def _prepend_time_context(system_prompt: str) -> str:
+def _prepend_time_context(system_prompt: str, config: dict | None = None) -> str:
     """Ensure the prompt always starts with an explicit current-time anchor."""
-    time_context = _build_current_time_context()
+    time_context = _build_current_time_context(config)
     return f"{time_context}\n\n{system_prompt}".strip() if system_prompt else time_context
 
 
-def build_system_prompt(config: dict, *, include_word_game: bool = True) -> str:
+def build_system_prompt(config: dict) -> str:
     """
-    Assemble the full system prompt from config.
+    Assemble the full effective system prompt.
 
     Hierarchy:
-        Main system prompt
+        Main system prompt template file
         + Dynamic prompt (if enabled)
-        + Word game prompt with {secret-word} replaced (if enabled AND include_word_game)
     """
-    parts = [config.get("system_prompt", "")]
+    parts = [read_system_prompt_template()]
 
     if config.get("dynamic_prompt_enabled") and config.get("dynamic_prompt", ""):
         parts.append(config["dynamic_prompt"])
-
-    if include_word_game and config.get("word_game_enabled") and config.get("word_game_prompt", ""):
-        secret = config.get("secret_word", "")
-        game_prompt = config["word_game_prompt"].replace("{secret-word}", secret)
-        parts.append(game_prompt)
 
     # Inject Soul from soul.md
     if config.get("soul_enabled", False):
@@ -96,10 +103,10 @@ def build_system_prompt(config: dict, *, include_word_game: bool = True) -> str:
         
         soul_instructions = (
             "[SOUL — This is your mutable memory system.\n"
-            "To add a completely new memory entry, output: <!soul-add-new[id]: text>\n"
-            "To append to an existing entry ID, output: <!soul-update[id]: text>\n"
-            "To completely overwrite an entry ID, output: <!soul-override[id]: text>\n"
-            "To delete an entry ID, output: <!soul-delete[id]>]"
+            "To add a completely new memory entry, output: <!soul-add-new[id]: text!>\n"
+            "To append to an existing entry ID, output: <!soul-update[id]: text!>\n"
+            "To completely overwrite an entry ID, output: <!soul-override[id]: text!>\n"
+            "To delete an entry ID, output: <!soul-delete[id]!>]"
         )
         if soul_text:
             parts.append(f"{soul_instructions}\n\nCURRENT SOUL CONTENT:\n{soul_text}")
@@ -120,10 +127,10 @@ def build_system_prompt(config: dict, *, include_word_game: bool = True) -> str:
             "[REMINDERS & AUTO-WAKE — Your scheduled event system.\n"
             "IMPORTANT: Use EXACTLY this date format: dd-mm-yy HH:MM (24-hour clock).\n"
             "Example: 20-03-26 22:30 means 20th March 2026 at 22:30.\n\n"
-            "To schedule a new reminder, output: <!add-reminder : [dd-mm-yy HH:MM] [prompt]>\n"
-            "To cancel an existing reminder, output: <!delete-reminder : [dd-mm-yy HH:MM] [prompt]>\n"
-            "To schedule a self-wake, output: <!add-auto-wake-time : [dd-mm-yy HH:MM] [self-prompt]>\n"
-            "To cancel a self-wake, output: <!delete-auto-wake-time : [dd-mm-yy HH:MM] [self-prompt]>\n"
+            "To schedule a new reminder, output: <!add-reminder : [dd-mm-yy HH:MM] [prompt]!>\n"
+            "To cancel an existing reminder, output: <!delete-reminder : [dd-mm-yy HH:MM] [prompt]!>\n"
+            "To schedule a self-wake, output: <!add-auto-wake-time : [dd-mm-yy HH:MM] [self-prompt]!>\n"
+            "To cancel a self-wake, output: <!delete-auto-wake-time : [dd-mm-yy HH:MM] [self-prompt]!>\n"
             "These tags are automatically hidden from users and logged for transparency.\n"
             "When a reminder fires, its prompt is sent to you as input.]"
         )
@@ -148,7 +155,8 @@ def build_system_prompt(config: dict, *, include_word_game: bool = True) -> str:
         if tama_prompt:
             parts.append(tama_prompt)
 
-    return "\n\n".join(p for p in parts if p)
+    joined = "\n\n".join(p.strip() for p in parts if p and str(p).strip())
+    return render_prompt_template(joined, config)
 
 
 def _build_user_text(
@@ -175,18 +183,45 @@ def _build_user_text(
     return "\n".join(parts)
 
 
+def _part_is_thought(part: dict) -> bool:
+    """Return True when the provider marks a text part as internal thinking."""
+    value = part.get("thought")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return False
+
+
 def _extract_text(data: dict) -> str | None:
-    """Pull the first text part out of a generateContent response."""
+    """
+    Concatenate user-visible text parts from the first candidate response.
+
+    Gemini can return separate text parts for internal thinking and the final
+    answer. We prefer non-thought parts when present, but keep a legacy
+    fallback to all text parts so older prompt/tag flows still work.
+    """
     candidates = data.get("candidates", [])
     if not candidates:
         return None
     candidate = candidates[0]
     if candidate.get("finishReason") == "SAFETY":
         return None
+
+    visible_text_parts: list[str] = []
+    fallback_text_parts: list[str] = []
     for part in candidate.get("content", {}).get("parts", []):
-        if "text" in part:
-            return part["text"]
-    return None
+        text = part.get("text")
+        if not text:
+            continue
+        fallback_text_parts.append(text)
+        if not _part_is_thought(part):
+            visible_text_parts.append(text)
+
+    text_parts = visible_text_parts or fallback_text_parts
+    if not text_parts:
+        return None
+    return "\n".join(text_parts).strip()
 
 
 def _requires_search(prompt: str) -> bool:
@@ -229,7 +264,7 @@ async def generate(
     Call the Gemini API and return (text_reply, wav_bytes_or_None, soul_logs, reminder_cmds).
 
     system_prompt_override: if provided, used instead of the auto-assembled
-    system prompt.  Used by the word-game hidden turn.
+    system prompt.
     """
     api_key = get_secret("api_key")
     if not api_key:
@@ -295,14 +330,13 @@ async def generate(
     if system_prompt_override is not None:
         system_prompt = system_prompt_override
     else:
-        # Normal assembly: include_word_game=True unless revival
-        include_game = not bool(revival_system_instruct)
-        system_prompt = build_system_prompt(config, include_word_game=include_game)
+        system_prompt = build_system_prompt(config)
 
     if revival_system_instruct:
         system_prompt = (system_prompt + "\n\n" + revival_system_instruct).strip()
 
-    system_prompt = _prepend_time_context(system_prompt)
+    system_prompt = render_prompt_template(system_prompt, config)
+    system_prompt = _prepend_time_context(system_prompt, config)
 
     # ── Step 1: text inference via REST generateContent ────────────────────
     # Custom mode with Gemma-style injection when using non-Google APIs
