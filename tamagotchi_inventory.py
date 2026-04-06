@@ -98,6 +98,19 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "lucky_gift_prize": True,
         "store_in_inventory": True,
     },
+    "champagne": {
+        "name": "Champagne",
+        "emoji": "🍾",
+        "item_type": "drink",
+        "multiplier": 8.0,
+        "energy_multiplier": 0.0,
+        "energy_delta": 0.0,
+        "happiness_delta": 0.0,
+        "button_style": "success",
+        "amount": 0,
+        "lucky_gift_prize": True,
+        "store_in_inventory": True,
+    },
     "pinata": {
         "name": "Piñata",
         "emoji": "🪅",
@@ -138,7 +151,7 @@ DEFAULT_TAMA_INVENTORY_ITEMS = {
         "store_in_inventory": False,
     },
 }
-TAMA_INVENTORY_DEFAULTS_VERSION = 8
+TAMA_INVENTORY_DEFAULTS_VERSION = 9
 
 BUTTON_STYLE_BY_NAME = {
     "primary": discord.ButtonStyle.primary,
